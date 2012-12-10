@@ -33,6 +33,9 @@ import socket
 import os
 import sys
 import logging
+import errno
+
+from Packetize import PacketizeMixin
 
 class GitFSStringMixin:
     """A collection of functions that manipulate strings and all the
@@ -105,9 +108,17 @@ class GitFSStringMixin:
     def getControlSocketPath(self, root):
         return self.getControlDirectory(root) + '/control'
 
+    def checkDict(self, dict, **kwargs):
+        c = dict(**kwargs)
+        try:
+            for key in c:
+                if dict[key] != c[key]:
+                    return False
+            return True
+        except KeyError:
+            return False
 
-
-class GitFSClient(GitFSStringMixin, object):
+class GitFSClient(GitFSStringMixin, PacketizeMixin, object):
 
     def __init__(self, path):
         self.socket = None
@@ -115,30 +126,45 @@ class GitFSClient(GitFSStringMixin, object):
         self.control_path = self.getControlDirectory(self.root)
         self.socket_path = self.getControlSocketPath(self.root)
         logging.debug("socket_path = %s" %self.socket_path)
+        self.stringFromDict=self.marshalDict
+        self.dictFromString=self.parseDict
+        self.packet=[]
+        self._length_bytes = 2
 
     def _sendDict(self, dict):
         if self.socket == None:
             if not os.path.exists(self.socket_path):
                 raise socket.error("Socket Not Found")
-            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.socket.connect(self.socket_path)
-            self.socket.settimeout(2)
-        data = self.marshalDict(dict)
-        self.socket.send(data)
+            self.socket.settimeout(None)
+            self.request = self.socket
+            self.sendDict(dict)
 
     def _recvDict(self):
-        data = self.socket.recv(4096)
-        return self.parseDict(data)
+        self.getPacket()
+        dict = self.packet[0]
+        self.packet=[]
+        return dict
+
+    def handleDict(self, dict):
+        self.packet.append(dict)
     
     def executeRemote(self, dict):
         while True:
-            self._sendDict(dict)
             try:
+                self._sendDict(dict)
                 dict = self._recvDict()
                 return dict
             except socket.timeout as to:
                 pass
-    
+            except socket.error as so:
+                logging.debug("socket error so=%s" %so)
+                if so.errno == errno.EPIPE:
+                    self.socket = None
+                else:
+                    raise so
+
 
     def lockRemote(self):
         """Requests the other side lock the file system so that there
@@ -146,18 +172,27 @@ class GitFSClient(GitFSStringMixin, object):
         can be renewed indefinitely.
         """
         res = self.executeRemote({'action':'lock'})
-        return res['status'] == 'ok'
+        try:
+            return res['status'] == 'ok'
+        except KeyError:
+            return False
 
     def renewLock(self):
         return self.lockRemote()
 
     def unlockRemote(self):
         res = self.executeRemote({'action': 'unlock'})
-        return res['status'] == 'ok'
+        try:
+            return res['status'] == 'ok'
+        except KeyError:
+            return False
 
     def pingRemote(self):
         res = self.executeRemote({'action': 'ping'})
-        return res['status'] == 'ok' and res['message'] == 'pong'
+        try:
+            return res['status'] == 'ok' and res['message'] == 'pong'
+        except KeyError:
+            return False
 
     def close(self):
         return

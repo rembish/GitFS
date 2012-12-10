@@ -18,6 +18,9 @@
 #
 #
 
+import logging
+import errno
+
 """Packetize
 
 This module exports a class for pulling packets out of a stream and passing them off to
@@ -29,43 +32,74 @@ assumptions about the rest of the packet.  That's for the rest of the code.
 
 class PacketizeMixin:
     """ This is a mixin designed to work with the stream based request
-    handlers.  It assumes handle is called whenever there are some
-    bytes to read, even if it was justed called and only read some of
-    the available bytes.  It first reads enough bytes to get the length
-    of the data, and then it reads the data and calls handlePacket with the
+    handlers. It first reads enough bytes to get the length of the
+    data, and then it reads the data and calls handlePacket with the
     whole packet.
     """
 
-    def __init__(self, length_bytes=2):
-        self.length_bytes = length_bytes
-        self.buff=''
-        self.packet_len = 0
+    def getPacket(self):
+        # XXXXX Fixme: there has to be a bette way to do this
+        try:
+            if self._length_bytes < 1:
+                self._length_bytes = 2
+        except AttributeError:
+            self._length_bytes = 2
+            
+        try:
+            self._packet_len
+            self._buff
+        except AttributeError:
+            self._packet_len = 0
+            self._buff=''
 
-    def handle(self):
-        if self.packet_len = 0:
-            self.buff = self.buff + self.request.recv(self.length_bytes - len(self.buff))
-            if len(self.buff) >= self.length_bytes:
-                for i in range (0, self.length_bytes):
-                    self.packet_len = self.packet_len * 8 + ord (self.buff[i])
-        else:
-            self.buff = self.buff + self.request.recv(self.packet_len = len(self.buff))
-            if len(self.puff) >= self.packet_len:
-                dfs = None
-                try:
-                    dfs = self.dictFromString
-                except NameError:
-                    pass
-
-                if fs != None:
-                    self.handleDict(dfs(self.buff[self.length_bytes-]))
+        try:
+            while True:
+                if self._packet_len == 0:
+                    logging.debug("getting packet length length_bytes = %s, bytes_in_buff = %s" %(self._length_bytes, len(self._buff)))
+                    self._buff = self._buff + self.request.recv(self._length_bytes - len(self._buff))
+                    if len(self._buff) >= self._length_bytes:
+                        for i in range (0, self._length_bytes):
+                            self._packet_len = self._packet_len * 8 + ord (self._buff[i])
+                    logging.debug("packet_len = %s" %self._packet_len)
                 else:
-                    self.handlePacket(self.buff[self.length_bytes-])
-            self.buff=''
-            self.packet_len = 0
+                    logging.debug("getting rest of packet")
+                    red =self.request.recv(self._packet_len - len(self._buff))
+                    if len(red) == 0:
+                        #happens when the socket gets closed on us in the middle.
+                        return
+                    self._buff = self._buff + red
+                    logging.debug("buff now: %s" %self._buff)
+
+                    if len(self._buff) >= self._packet_len:
+                        dfs = None
+                        try:
+                            dfs = self.dictFromString
+                        except AttributeError:
+                            pass
+
+                        if dfs != None:
+                            self.handleDict(dfs(self._buff[self._length_bytes:]))
+                        else:
+                            self.handlePacket(self._buff[self._length_bytes:])
+                    self._buff=''
+                    self._packet_len = 0
+                    if self.request.gettimeout() != 0:
+                        return
+        except IOError as ioe:
+            if ioe.errno != errno.EAGAIN and ioe.errno != errno.EWOULDBLOCK:
+                raise ioe
+        
+    def handle(self):
+        try:
+            old_timeout = self.request.gettimeout()
+            self.request.settimeout(0)
+            self.getPacket()
+        finally:
+            self.request.settimeout(old_timeout)
 
     def sendPacket(self, data):
-        dl = len(data) + self.length_bytes
-        for i in range (0, self.length_bytes):
+        dl = len(data) + self._length_bytes
+        for i in range (0, self._length_bytes):
             data = chr(dl & 0xff) + data
             dl = dl >> 8
         self.request.sendall(data)
