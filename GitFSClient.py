@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-#
 # GitFSClient.py  -*- python -*-
 # Copyright (c) 2012 Ross Biro
 #
@@ -35,9 +34,9 @@ import sys
 import logging
 import errno
 
-from Packetize import PacketizeMixin
+from Packetize import PacketizeMixIn
 
-class GitFSStringMixin:
+class GitFSStringMixIn:
     """A collection of functions that manipulate strings and all the
     different components have to do in the same way.
     """
@@ -118,7 +117,7 @@ class GitFSStringMixin:
         except KeyError:
             return False
 
-class GitFSClient(GitFSStringMixin, PacketizeMixin, object):
+class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
 
     def __init__(self, path):
         self.socket = None
@@ -139,10 +138,12 @@ class GitFSClient(GitFSStringMixin, PacketizeMixin, object):
             self.socket.connect(self.socket_path)
             self.socket.settimeout(None)
             self.request = self.socket
-            self.sendDict(dict)
+        self.sendDict(dict)
 
     def _recvDict(self):
         self.getPacket()
+        if len(self.packet) == 0:
+            return None
         dict = self.packet[0]
         self.packet=[]
         return dict
@@ -199,13 +200,21 @@ class GitFSClient(GitFSStringMixin, PacketizeMixin, object):
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-    if len(sys.argv) != 2:
-        print 'usage: %s <local_repo>' %sys.argv[0]
+    if len(sys.argv) < 2:
+        print 'usage: %s <local_repo> [command(s)]' %sys.argv[0]
         exit(1)
     client = GitFSClient(sys.argv[1])
-    if client.pingRemote():
-        print "Pong\n"
-        exit(0)
-    print "No response.\n"
-    exit(1)
+    if len(sys.argv) == 2:
+        if client.pingRemote():
+            print "Pong\n"
+            exit(0)
+        else:
+            print "No response.\n"
+            exit(1)
+    else:
+        for command in sys.argv[2:]:
+            res = client.executeRemote({'action': command})
+            print "%s: %s" %(command, res)
+    exit(0)
+            
     

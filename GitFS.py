@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#
+# GitFS.py -*- python -*-
 # Use Git as a Storage Filesystem
 #
 # This work is
@@ -52,10 +52,10 @@ from IPy import IP # use to determine if we should consider the ip address local
 from subprocess import call, check_output
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
-from SocketServer import UnixStreamServer, BaseRequestHandler
-from GitFSClient import GitFSClient, GitFSStringMixin
+from SocketServer import ThreadingUnixStreamServer, BaseRequestHandler, ThreadingMixIn
+from GitFSClient import GitFSClient, GitFSStringMixIn
 #from EasyDialogs import AskYesNoCancel, Message
-from Packetize import PacketizeMixin
+from Packetize import PacketizeMixIn
 
 class GitStatus(object):
 
@@ -98,7 +98,7 @@ class GitStatus(object):
     def clear(self):
         self.status.clear()
 
-class GitRepo(GitFSStringMixin, LoggingMixIn, object):
+class GitRepo(GitFSStringMixIn, LoggingMixIn, object):
 
     def __init__(self, path, origin, branch, sync=False):
         self.path = path
@@ -262,7 +262,7 @@ class GitRepo(GitFSStringMixin, LoggingMixIn, object):
         self.timer = None
         self.push_c.release()
 
-class GitFS(LoggingMixIn, GitFSStringMixin, Operations):
+class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
     """A simple filesystem using Git and FUSE.
     """
     
@@ -272,13 +272,15 @@ class GitFS(LoggingMixIn, GitFSStringMixin, Operations):
         self.root = os.path.realpath(path)
         self.halt = False
         self.rwlock = Lock()
-        self.sync_c = Condition()
+         # Can't use the default rlock here since we want to aquire/release from different threads
+        self.sync_c = Condition(Lock())
         self.timer = None
         self.handlers = { 'ping': self._handlePing, 'lock': self._handleLock, 'unlock': self._handleUnlock }
         self.lock_timer = None
         self.lock_lock = Condition()
         self.locks = {}
-
+        self.lock_expire_time = time()
+        
         self.control_dir = self.getControlDirectory(self.root)
         try:
             os.mkdir(self.control_dir)
@@ -305,10 +307,11 @@ class GitFS(LoggingMixIn, GitFSStringMixin, Operations):
         except OSError:
             pass
         self.control_server = None
-        self.control_server = UnixStreamServer(self.control_socket_path, type("GitFSRequestHandler",
-                                                                              (PacketizeMixin, BaseRequestHandler,object),
+        self.control_server = ThreadingUnixStreamServer(self.control_socket_path, type("GitFSRequestHandler",
+                                                                              (PacketizeMixIn, BaseRequestHandler,object),
         dict(fs=self, dictFromString=self.parseDict, stringFromDict=self.marshalDict,
              handleDict=lambda s,d: s.fs._handleRequest(s,d))))
+        self.control_server.daemon_threads = True
 
             # setup the threads last so that they don't prevent an exit.       
         self.control_thread = Thread(target = self.control_server.serve_forever, args=())
@@ -317,29 +320,32 @@ class GitFS(LoggingMixIn, GitFSStringMixin, Operations):
         self.sync_thread = Thread(target=self._sync, args=())
         self.sync_thread.start()
 
-    def _lockWithTImeOut(self, name, t):
+    def _lockWithTimeOut(self, name, t):
         if t <= 0:
             return
 
-        self.lock_lock.aquire()
+        self.lock_lock.acquire()
         expt = t + time()
         self.locks[name] = expt
-        if self.lock_expire_time < expt:
+        if self.lock_expire_time - expt < 0:
             self.lock_expire_time = expt
             if self.lock_timer != None:
                 self.lock_timer.cancel()
             else:
-                self.sync_c.aquire()
-            self.lock_timer = Timer(t, self._lockTimerExpire(), args=())
+                logging.debug("Aquiring fresh lock")
+                self.sync_c.acquire()
+            self.lock_timer = Timer(t, self._lockTimerExpire, args=())
             self.lock_timer.start()
         self.lock_lock.release()
 
     def _lockTimerExpire(self):
-        self.lock_lock.aquire()
+        logging.debug('_lockTimeExpire')
+        self.lock_lock.acquire()
         self.__lockTimerExpire()
         self.lock_lock.release()
         
     def __lockTimerExpire(self):
+        logging.debug('__lockTimeExpire')
         now = time()
         t = now
         for key in self.locks:
@@ -352,21 +358,28 @@ class GitFS(LoggingMixIn, GitFSStringMixin, Operations):
             self.lock_expire_time = t
             if self.lock_timer != None:
                 self.lock_timer.cancel()
-            self.lock_timer = Timer(t - now, self._lockTimerExpire(), args=())
+            else:
+                logging.debug("***** ERROR ***** __lockTimerExpire doesn't have lock. acquiring")
+                self.sync_c.aquire()
+            self.lock_timer = Timer(t - now, self._lockTimerExpire, args=())
+            self.lock_timer.start()
+            logging.debug("extending lock.")
         else:
             if self.lock_timer != None:
+                logging.debug("releasing lock.")
                 self.lock_timer.cancel()
-            self.lock_timer = None
-        
+                self.lock_timer = None
+                self.sync_c.release()
+
+            
     def _unlock(self, name):
         if name not in self.locks:
             return
 
-        self.lock_lock.aquire()
-        
-        if self.locks[name] < self.lock_expire_time:
-            del self.locks[name]
-        else:
+        self.lock_lock.acquire()
+        t = self.locks[name]
+        del self.locks[name]
+        if t >= self.lock_expire_time or len(keys(self.locks)) == 0:
             self.__lockTimerExpire()
             
         self.lock_lock.release()
@@ -387,11 +400,11 @@ class GitFS(LoggingMixIn, GitFSStringMixin, Operations):
         self._respond(request, {'status': 'ok', 'message': 'pong' })
 
     def _handleLock(self, reqDict, request):
-        self._lockWithTimeOut(request.client_address, 60)
-        self._respond(request, {'status': 'ok', 'name': request.client_address})
+        self._lockWithTimeOut('%s' %request.request.fileno(), 60)
+        self._respond(request, {'status': 'ok', 'name': '%s' %request.request.fileno()})
 
     def _handleUnlock(self, reqDict, request):
-        self._unlock(request.client_address)
+        self._unlock('%s' %request.request.fileno())
         self._respond(request, {'status': 'ok'})
 
     def _sync(self):

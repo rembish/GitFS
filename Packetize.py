@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-#
 # Packetize.py  -*- python -*-
 # Copyright (c) 2012 Ross Biro
 #
@@ -30,11 +29,13 @@ We assume that first two (default) bytes of every packet are the length of the p
 assumptions about the rest of the packet.  That's for the rest of the code.
 """
 
-class PacketizeMixin:
+class PacketizeMixIn:
     """ This is a mixin designed to work with the stream based request
     handlers. It first reads enough bytes to get the length of the
     data, and then it reads the data and calls handlePacket with the
     whole packet.
+
+    Uses member variables:_length_bytes, _packet_len and _buff
     """
 
     def getPacket(self):
@@ -51,12 +52,16 @@ class PacketizeMixin:
         except AttributeError:
             self._packet_len = 0
             self._buff=''
-
+            
         try:
             while True:
                 if self._packet_len == 0:
-                    logging.debug("getting packet length length_bytes = %s, bytes_in_buff = %s" %(self._length_bytes, len(self._buff)))
-                    self._buff = self._buff + self.request.recv(self._length_bytes - len(self._buff))
+                    logging.debug('getting packet length length_bytes = %s, bytes_in_buff = %s' %(self._length_bytes, len(self._buff)))
+                    red = self.request.recv(self._length_bytes - len(self._buff))
+                    if len(red) == 0:
+                        logging.debug("recv returned 0 length string.")
+                        return False
+                    self._buff = self._buff + red
                     if len(self._buff) >= self._length_bytes:
                         for i in range (0, self._length_bytes):
                             self._packet_len = self._packet_len * 8 + ord (self._buff[i])
@@ -65,12 +70,14 @@ class PacketizeMixin:
                     logging.debug("getting rest of packet")
                     red =self.request.recv(self._packet_len - len(self._buff))
                     if len(red) == 0:
+                        logging.debug("recv returned 0 length string(2).")
                         #happens when the socket gets closed on us in the middle.
-                        return
+                        return False
                     self._buff = self._buff + red
                     logging.debug("buff now: %s" %self._buff)
 
                     if len(self._buff) >= self._packet_len:
+                        logging.debug('buff_len = %s, packet_len = %s' %(len(self._buff), self._packet_len))
                         dfs = None
                         try:
                             dfs = self.dictFromString
@@ -78,30 +85,28 @@ class PacketizeMixin:
                             pass
 
                         if dfs != None:
-                            self.handleDict(dfs(self._buff[self._length_bytes:]))
+                            self.handleDict(dfs(self._buff[self._length_bytes:self._packet_len]))
                         else:
-                            self.handlePacket(self._buff[self._length_bytes:])
-                    self._buff=''
-                    self._packet_len = 0
-                    if self.request.gettimeout() != 0:
-                        return
+                            self.handlePacket(self._buff[self._length_bytes:self._packet_len])
+                        self._buff=''
+                        self._packet_len = 0
+                        return True
+                    
         except IOError as ioe:
+            logging.debug ("ioerror: %s" %ioe)
             if ioe.errno != errno.EAGAIN and ioe.errno != errno.EWOULDBLOCK:
                 raise ioe
         
     def handle(self):
-        try:
-            old_timeout = self.request.gettimeout()
-            self.request.settimeout(0)
-            self.getPacket()
-        finally:
-            self.request.settimeout(old_timeout)
+        while self.getPacket():
+            pass
 
     def sendPacket(self, data):
         dl = len(data) + self._length_bytes
         for i in range (0, self._length_bytes):
             data = chr(dl & 0xff) + data
             dl = dl >> 8
+        logging.debug('Sending %s bytes' %(len(data)))
         self.request.sendall(data)
 
     def sendDict(self, dict):
