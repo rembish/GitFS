@@ -136,7 +136,7 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
                 raise socket.error("Socket Not Found")
             self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.socket.connect(self.socket_path)
-            self.socket.settimeout(None)
+            self.socket.settimeout(2)
             self.request = self.socket
         self.sendDict(dict)
 
@@ -158,7 +158,7 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
                 dict = self._recvDict()
                 return dict
             except socket.timeout as to:
-                pass
+                return None
             except socket.error as so:
                 logging.debug("socket error so=%s" %so)
                 if so.errno == errno.EPIPE:
@@ -173,6 +173,8 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
         can be renewed indefinitely.
         """
         res = self.executeRemote({'action':'lock'})
+        if res == None:
+            return False
         try:
             return res['status'] == 'ok'
         except KeyError:
@@ -183,6 +185,8 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
 
     def unlockRemote(self):
         res = self.executeRemote({'action': 'unlock'})
+        if res == None:
+            return False
         try:
             return res['status'] == 'ok'
         except KeyError:
@@ -190,6 +194,8 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
 
     def pingRemote(self):
         res = self.executeRemote({'action': 'ping'})
+        if res == None:
+            return False
         try:
             return res['status'] == 'ok' and res['message'] == 'pong'
         except KeyError:

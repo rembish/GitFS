@@ -560,12 +560,16 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
             os.lseek(fh, offset, 0)
             return os.write(fh, data)
 
+def main(origin, branch, local, mountpt):
+    dir, fil = os.path.split(mountpt)
+    gitfs = GitFS(origin, branch, local);
+    fuse = FUSE(gitfs, mountpt, foreground=True, volname=fil)
+    gitfs.destroy(None)
+
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     if len(argv) != 5:
         print 'usage: %s <origin> <branch> <local_repo> <mount_point>' % argv[0]
         exit(1)
-    dir, fil = os.path.split(argv[4])
-    gitfs = GitFS(argv[1], argv[2], argv[3]);
-    fuse = FUSE(gitfs, argv[4], foreground=True, volname=fil)
-    gitfs.destroy(None)
+    main (argv[1], argv[2], argv[3], argv[4])
+
