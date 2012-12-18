@@ -38,6 +38,7 @@ from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
 
 def readFSTab(file, fstab):
+    logging.debug("reading fstab file: %s" %file)
     if not os.path.exists(file):
         return
 
@@ -52,21 +53,31 @@ def readFSTab(file, fstab):
     lines = [line.strip() for line in open(file)]
 
     for l in lines:
+        logging.debug("Looking at line %s" %l)
         try:
             l = l.strip()
             if len(l) == 0 or l[0] == '#':
                 continue
+            logging.debug("found non comment")
             d={}
             keys = ['device', 'mount_point', 'type', 'options', 'freq', 'passno']
             vals = l.split(None, 6)
-            for i in range(1,6):
+            logging.debug("raw fstab entry: %s" %vals)
+            for i in range(0,5):
                 d[keys[i]] = vals[i]
-                if d['type'] == 'gitfs':
-                    ops = {}
-                    if d['options'] != 'none':
-                        praseOptions(d['options'], ops)
-                    d['options'] = ops
-                    fstab.append(d)
+            logging.debug('processed fstab entry: %s' %d)
+            d['device'] = os.path.expandvars(os.path.expanduser(d['device']))
+            d['mount_point'] = os.path.expandvars(os.path.expanduser(d['mount_point']))
+            if d['type'] == 'gitfs':
+                logging.debug("found gitfs file system.")
+                ops = {}
+                if d['options'] != 'none':
+                    parseOptions(d['options'], ops)
+                d['options'] = ops
+                fstab.append(d)
+                logging.debug("fstab entry: %s" %d)
+            else:
+                logging.debug('not a gitfs file system: %s' %d['type'])
         except Exception:
             pass
 
@@ -101,7 +112,7 @@ def mergeOptions(o1, o2):
     local ones.
     Currently the only option with special support is ro.
     """
-    for k in keys(o2):
+    for k in o2.keys():
         o1[k] = o2[k]
 
     if 'ro' in o1 and ro not in o2:
@@ -117,12 +128,13 @@ def mergeFSTab(fstabs):
         return fstabs
 
     fstab = fstabs[0]
-
+    logging.debug('mergeFstab: first fstab: %s' %fstab)
     for fs in fstabs:
         if fs['mount_point'] != fstab['mount_point'] or fs['device'] != fstab['device']:
             raise GitFSExcpetion('Mismatched FSTab entries.')
-        mergeOptions(fstab[options], fs[options])
+        mergeOptions(fstab['options'], fs['options'])
 
+    logging.debug('mergeFstab: final fstab: %s' %fstab)
     return fstab
     
 def mount(device, mount_point, options):
@@ -211,16 +223,20 @@ if __name__ == "__main__":
         for f in options[fstab].split(','):
             readFSTab(f, fstab)
 
+
     if cmdline.device == None:
         if not cmdline.auto:
             os.execv('/sbin/mount', ['mount']) # should not return.
             sys.exit(1)
     else:
-        fstab = mergeFSTab(filter(lambda f: f['device'] == cmdline.device or f['mount_point'] == cmdline.device, fstab))
+        device = os.path.expandvars(os.path.expanduser(cmdline.device))
+        fstab = mergeFSTab(filter(lambda f: f['device'] == device or f['mount_point'] == device, fstab))
 
-    for fs in fstab:
-        fsoptions = mergeoptions(processOptions(fs['options']), options)
-        if not cmdline.auto or 'noauto' not in fsoptions:
-            mount(fs['device'], fs['mount_point'], fsoptions)
+    if len(fstab) == 0:
+        print('Nomatch for %s in fstab.' %device)
+        sys.exit(1)
 
-
+    logging.debug("found fstab: %s" %fstab)
+    mergeOptions(fstab['options'], options)
+    if not cmdline.auto or 'noauto' not in fstab['options']:
+        mount(fstab['device'], fstab['mount_point'], fstab['options'])

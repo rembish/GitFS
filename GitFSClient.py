@@ -129,6 +129,8 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
         self.dictFromString=self.parseDict
         self.packet=[]
         self._length_bytes = 2
+        self.holdLock = False
+        self.progressChecker = None
 
     def _sendDict(self, dict):
         if self.socket == None:
@@ -180,10 +182,27 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
         except KeyError:
             return False
 
+    def _lockRemoateAndHold(self):
+        while self.holdLock:
+            # if we are not making progress, then quit.
+            if self.progressChecker != None and self.progressChecker.progress() != True:
+                break
+                
+            self.lock()
+            time.sleep(30)
+        
+    def lockRemoteAndHold(self, progress=None):
+        self.holdLock=True
+        self.progressChecker = progress
+        t = Thread(target = self._lockRemoteAndHold, args=())
+        t.daemon = True
+        t.start()
+
     def renewLock(self):
         return self.lockRemote()
 
     def unlockRemote(self):
+        self.holdLock=False
         res = self.executeRemote({'action': 'unlock'})
         if res == None:
             return False
