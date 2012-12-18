@@ -33,8 +33,10 @@ import os
 import sys
 import logging
 import errno
+import time
 
 from Packetize import PacketizeMixIn
+from threading import Thread
 
 class GitFSStringMixIn:
     """A collection of functions that manipulate strings and all the
@@ -182,16 +184,19 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
         except KeyError:
             return False
 
-    def _lockRemoateAndHold(self):
+    def _lockRemoteAndHold(self):
+        # XXXX Fixme:  Really need to use a lock and condition here.
         while self.holdLock:
             # if we are not making progress, then quit.
             if self.progressChecker != None and self.progressChecker.progress() != True:
                 break
                 
-            self.lock()
+            self.lockRemote()
             time.sleep(30)
         
     def lockRemoteAndHold(self, progress=None):
+        # XXXXX Fixme:  really need to lock this and single the
+        # thread to exit using a Condition.
         self.holdLock=True
         self.progressChecker = progress
         t = Thread(target = self._lockRemoteAndHold, args=())
@@ -210,6 +215,17 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
             return res['status'] == 'ok'
         except KeyError:
             return False
+
+    def getInfoRemote(self):
+        res = self.executeRemote({'action': 'info'})
+        if res == None:
+            return {}
+        try:
+            if res['status'] != 'ok':
+                return {}
+            return res
+        except KeyError:
+            return {}
 
     def pingRemote(self):
         res = self.executeRemote({'action': 'ping'})

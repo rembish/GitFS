@@ -275,7 +275,8 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
          # Can't use the default rlock here since we want to aquire/release from different threads
         self.sync_c = Condition(Lock())
         self.timer = None
-        self.handlers = { 'ping': self._handlePing, 'lock': self._handleLock, 'unlock': self._handleUnlock }
+        self.handlers = { 'ping': self._handlePing, 'lock': self._handleLock, 'unlock': self._handleUnlock,
+                          'info': self._handleInfo}
         self.lock_timer = None
         self.lock_lock = Condition()
         self.locks = {}
@@ -390,7 +391,7 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
             return mf(d, request)
 
         logging.debug("No request in packet: %s" %d)
-        self._respondDict(request, {'status': 'Unknown Command'})
+        self._respond(request, {'status': 'Unknown Command'})
         return None
 
     def _respond(self, request, responseDict):
@@ -406,6 +407,9 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
     def _handleUnlock(self, reqDict, request):
         self._unlock('%s' %request.request.fileno())
         self._respond(request, {'status': 'ok'})
+
+    def _handleInfo(self, reqDict, request):
+        self._respond(request, {'status': 'ok', 'origin': self.repo.origin, 'branch': self.repo.branch })
 
     def _sync(self):
         while True:
