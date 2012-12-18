@@ -1,13 +1,37 @@
 
-A FUSE based filesystem for using Git as a disconnected storage server with local cache.
+*** Little to NO testing has been done so far ****
+*** Use at your own risk. ***
+*** Currently not even Alpha Quality. ***
 
-To mount already existing git repo, run
+A FUSE based filesystem for using Git as a disconnected storage server
+with local cache.  This is not designed to save space on the local
+server.  It is designed to allow disconnect operation and still have a
+hope of keeping files in sync across many devices.  There are likely
+better ways to do this.
 
-python GitFS.py <remote-name> <branch> <local_repo_dir> <mount_point>
+Now supports minimal ~/.gitfs/fstab.  The easiest way to get started
+is to use gmkfs.py.
+
+gmkfs.py <git-repository> <local-directory>
+
+will create the shadow directory and a basic fstab entry in
+~/.gitfs/fstab, and do a git pull to populate the shadow directory.
+
+Then gmount.py <local-directory> should mount the filesystem and you
+will be ready to go.
+
+gsync.py stops the file-system server and does a commit, pull,
+mergetool, push sequence to allow for manual merges and forcing a
+repository to be up-to-date.  Useful if you plan on doing a remote
+build.
+
+To manually mount already existing git repo:
+
+python GitFS.py <remote-name> <branch> <local_repo_dir> <local_dir>
 
 To unmount use
 
-umount <mount_point>
+umount <local_dir>
 
 Licensed under the GPL V3 license.  See the file COPYING.GPL for more information.
 
@@ -30,7 +54,7 @@ files in the git repository that you are mounting that start with '@'
 or '.' will not exist in the mounted file system.  This makes it
 possible to use git inside of a GitFS file-system.
 
-Currently, any changes are commited after one minute if the repository
+Currently, any changes are committed after one minute if the repository
 is on a reserved subnet, and 10 minutes if the repository is on a
 public subnet.  Eventually this should all be configurable via a
 configuration file stored under "@gtifs" in the root directory of the
@@ -42,8 +66,9 @@ to git.
 
 TODO:  Everything.  But in particular:
 Finish support programs:
- gmount
- gumount
+ gmount -- The command-line arguments will almost certainly cause problems right now.  Just use options.
+ gmkfs -- Works in the simplest case, YMMV
+ gumount -- the same as umount, so not a priority.
  gsync -- force a sync outside of GitFS.  Useful to do something like gsync && ssh build-host bash -c 'gsync && make'
  gbuild -- to wrap the above command line into something useable
 
@@ -52,7 +77,7 @@ and of course, lots of debugging.
 Other ideas (in no particular order): 
     encryption at the fs level
     allow the local repository to be shallow without all the issues that normally causes (save local space)
-    Allow gmount to mount the repsoitory as it was at a certain point in time (auto branch?)
+    Allow gmount to mount the repository as it was at a certain point in time (auto branch?)
 
 
 
