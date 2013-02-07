@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # GitFS.py -*- python -*-
 # Use Git as a Storage Filesystem
 #
@@ -44,6 +44,7 @@ import datetime
 import os
 import sys
 import socket
+import platform
 
 from threading import Lock, Condition, Thread, Timer
 from urlparse import urlparse # used to figure out the host so we can determine if it's remote or local.
@@ -565,9 +566,14 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
             return os.write(fh, data)
 
 def main(origin, branch, local, mountpt):
-    dir, fil = os.path.split(mountpt)
     gitfs = GitFS(origin, branch, local);
-    fuse = FUSE(gitfs, mountpt, foreground=True, volname=fil)
+    options = {}
+    options['foreground']=True
+    if platform.system == 'Darwin':
+        dir, fil = os.path.split(mountpt)
+        options['volname'] = fil
+
+    fuse = FUSE(gitfs, mountpt, **options)
     gitfs.destroy(None)
 
 if __name__ == "__main__":
