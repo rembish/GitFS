@@ -52,7 +52,7 @@ class GitFSStringMixIn:
         return string
 
     def escapePath(self, path):
-        logging.debug('escapePath(%s)' %path)
+        #logging.debug('escapePath(%s)' %path)
         if path == '/' or path == '':
             return path
         dir, fil = os.path.split(path)

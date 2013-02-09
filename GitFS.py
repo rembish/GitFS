@@ -45,13 +45,14 @@ import os
 import sys
 import socket
 
-from threading import Lock, Condition, Thread, Timer
+from threading import Lock, Condition, Thread, Timer, Semaphore
+
 from urlparse import urlparse # used to figure out the host so we can determine if it's remote or local.
-from socket import getaddrinfo #call this to translate the host/port into something useable.
+from socket import getaddrinfo, gaierror #call this to translate the host/port into something useable.
 from IPy import IP # use to determine if we should consider the ip address local or not.
 from subprocess import call, check_output
 
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+from fuse_old import FUSE, FuseOSError, Operations, LoggingMixIn
 from SocketServer import ThreadingUnixStreamServer, BaseRequestHandler, ThreadingMixIn
 from GitFSClient import GitFSClient, GitFSStringMixIn
 #from EasyDialogs import AskYesNoCancel, Message
@@ -85,20 +86,18 @@ class GitStatus(object):
         return self.status
 
     def stagedFiles(self):
-        self.update()
         return self.status.get('renamed',  []) + \
                self.status.get('modified', []) + \
                self.status.get('new file', []) + \
                self.status.get('deleted',  [])
 
     def unstagedFiles(self):
-        self.update()
         return self.status.get('untracked', [])
 
     def clear(self):
         self.status.clear()
 
-class GitRepo(GitFSStringMixIn, LoggingMixIn, object):
+class GitRepo(GitFSStringMixIn, object):
 
     def __init__(self, path, origin, branch, sync=False):
         self.path = path
@@ -110,42 +109,54 @@ class GitRepo(GitFSStringMixIn, LoggingMixIn, object):
         
         self.host = None
         self.merge_needed = 0
-        self.push_c = Condition()
+        self.push_c = Semaphore()
         self.forcePush()
-        
-        if sync:
-            self.synchronize()
 
         # prime the push timer pump
         self.timer = Timer(0, self.push, args=())
         self.timer.start()
+        
+        if sync:
+            self.synchronize()
+
 
     def synchronize(self):
-        logging.debug('syncing')
-        if self.syncNeeded():
-            unstaged = self.status.unstagedFiles()
-            for file in unstaged:
-                self.stage(file)
-            self.commit('syncing files @ %s' %datetime.datetime.now())
-            # Don't push here since a timer should already be
-            # going and the push will happen when it should.
-
+        # we need to serialize our access to git.
+        if self.push_c.acquire(False):
+            try:
+                logging.debug('syncing')
+                if self.syncNeeded():
+                    unstaged = self.status.unstagedFiles()
+                    for file in unstaged:
+                        self.stage(file)
+                    self.commit('syncing files @ %s' %datetime.datetime.now())
+                    # Don't push here since a timer should already be
+                    # going and the push will happen when it should.
+            finally:
+                self.push_c.release()
+            return True
+        return False
 
     def syncTime(self):
         if self.host == None or self.host == "":
             return 0
 
-        # assume the system caches dns info, so we don't have to.
-        ai = getaddrinfo(self.host, self.port)
+        try:
+            # assume the system caches dns info, so we don't have to.
+            ai = getaddrinfo(self.host, self.port)
+        except gaierror:
+            # try again in a minute
+            return 60 
             
         # for now assume private = rapid updates.
         for addressinfo in ai:
             if IP(addressinfo[4][0]).iptype == 'PRIVATE':
                 return 60
             
-        return 10*60
+        return 60
 
     def syncNeeded(self):
+        self.status.update()
         return (self.status.stagedFiles() + self.status.unstagedFiles() and True or
                 (time() - self.last_push > self.syncTime()))
 
@@ -154,7 +165,7 @@ class GitRepo(GitFSStringMixIn, LoggingMixIn, object):
         call('git add \"%s\"' %self.escapeQuotes(file), shell=True)
 
     def commit(self, msg):
-        logging.debug('commiting file %s' %file)
+        logging.debug('commiting msg %s' %msg)
         call('git commit -am \"%s\"' %self.escapeQuotes(msg), shell=True)
 
     def forcePush(self):
@@ -215,43 +226,46 @@ class GitRepo(GitFSStringMixIn, LoggingMixIn, object):
 
     def push(self):
         logging.debug('pushing')
-        self.push_c.acquire()
-        if self.halt:
-            self.push_c.release()
-            return
-        
-        push_time = self.syncTime()
-        now = time()
-        
-        if now - self.last_push >= push_time:
-            try:
-                self.pull()
-                self.status.clear() # Clear first
-                ret = call('git push \"%s\" \"%s\"' %(self.origin, self.branch), shell=True)
-            except OSError as e:
-                ret = -1
-            if ret == 0:
-                if self.timer != None:
-                    self.timer.cancel()
-                    self.timer = Timer(self.syncTime(), self.push, args=())
+        try:
+            self.push_c.acquire()
+            if self.halt:
+                return
+
+            push_time = self.syncTime()
+            now = time()
+
+            if now - self.last_push >= push_time:
+                try:
+                    self.pull()
+                    self.status.clear() # Clear first
+                    ret = call('git push \"%s\" \"%s\"' %(self.origin, self.branch), shell=True)
+                except Exception as e:
+                    logging.debug("push:Exception %s" %e)
+                    ret = -1
+
+                if ret == 0:
+                    if self.timer != None:
+                        self.timer.cancel()
+                        self.timer = Timer(self.syncTime(), self.push, args=())
+                        self.timer.start()
+                    self.last_push = time()
+                else:
+                    if self.timer != None:
+                        self.timer.cancel()
+
+                    #we need to check what happened and try again.
+                    self.status.update() 
+                    self.timer = Timer(60, self.push, args=())
                     self.timer.start()
-                self.last_push = time()
             else:
                 if self.timer != None:
                     self.timer.cancel()
-                    
-                #we need to check what happened and try again.
-                self.status.update() 
-                self.timer = Timer(60, self.push, args=())
+                self.timer = Timer(push_time - now + self.last_push, self.push, args=())
                 self.timer.start()
-        else:
-            if self.timer != None:
-                self.timer.cancel()
-            self.timer = Timer(push_time - now + self.last_push, self.push, args=())
-            self.timer.start()
-            logging.debug('try to push again in %d seconds' %(push_time - now + self.last_push))
-            
-        self.push_c.release()
+                logging.debug('try to push again in %d seconds' %(push_time - now + self.last_push))
+        finally:
+            self.push_c.release()
+            logging.debug("push done")
 
     def shutDown(self):
         logging.debug("repo shutdown")
@@ -262,7 +276,7 @@ class GitRepo(GitFSStringMixIn, LoggingMixIn, object):
         self.timer = None
         self.push_c.release()
 
-class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
+class GitFS(GitFSStringMixIn, Operations):
     """A simple filesystem using Git and FUSE.
     """
     
@@ -272,8 +286,9 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
         self.root = os.path.realpath(path)
         self.halt = False
         self.rwlock = Lock()
-         # Can't use the default rlock here since we want to aquire/release from different threads
+         # Can't use the default rlock here since we want to acquire/release from different threads
         self.sync_c = Condition(Lock())
+        self.timer_c = Condition(Lock())
         self.timer = None
         self.handlers = { 'ping': self._handlePing, 'lock': self._handleLock, 'unlock': self._handleUnlock,
                           'info': self._handleInfo}
@@ -290,6 +305,8 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
 
         self.control_socket_path = self.getControlSocketPath(self.root)
         client = GitFSClient(self.root)
+
+        self.needSyncTime = None
 
         try:
             if client.pingRemote():
@@ -361,7 +378,7 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
                 self.lock_timer.cancel()
             else:
                 logging.debug("***** ERROR ***** __lockTimerExpire doesn't have lock. acquiring")
-                self.sync_c.aquire()
+                self.sync_c.acquire()
             self.lock_timer = Timer(t - now, self._lockTimerExpire, args=())
             self.lock_timer.start()
             logging.debug("extending lock.")
@@ -417,10 +434,18 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
             if not self.halt:
                 # wait till a sync request comes
                 self.sync_c.wait()
+                self.timer_c.acquire()
                 if self.timer != None:
                     self.timer.cancel()
                     self.timer = None
-                self.repo.synchronize()
+                self.timer_c.release()
+                try:
+                    if not self.repo.synchronize():
+                        #sync failed, we need to try again.
+                        self.needSync()
+                    self.needSyncTime = None
+                except Exception as e:
+                    logging.debug("synchronize threw exception %s" %e)
                 self.sync_c.release() # can't release this until sync is complete because we can't change files while we sync.
             else:
                 self.repo.forcePush()
@@ -436,12 +461,20 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
         
     def needSync(self):
         logging.debug('needSync()')
-        self.sync_c.acquire()
-        if self.timer == None:
-            # save things once a minute so that we have snapshots
-            self.timer = Timer(60, self.forceSync, args=())
-            self.timer.start()
-        self.sync_c.release()
+        self.timer_c.acquire()
+        if self.needSyncTime == None:
+            self.needSyncTime = time()
+
+        if self.timer != None:
+            if time() - self.needSyncTime > 5*60:
+                return
+            self.timer.cancel()
+
+        # don't do anything until there is a pause.
+        self.timer = Timer(10, self.forceSync, args=())
+        self.timer.start()
+        
+        self.timer_c.release()
 
     def shutdown(self):
         # stop sync thread
@@ -461,8 +494,17 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
                 pass
         
     def __call__(self, op, path, *args):
-        path = self.escapePath(path)
-        return super(GitFS, self).__call__(op, self.root + path, *args)
+        try:
+            logging.debug("calling %s on %s" %(op, path))
+            path = self.escapePath(path)
+            r = super(GitFS, self).__call__(op, self.root + path, *args)
+            pr = "%s" %r
+            pr = pr[:10]
+            logging.debug("returning %s for %s" %(pr, op))
+            return r
+        except Exception as e:
+            logging.debug("Unhandled exception %s" %e)
+            raise e
     
     def access(self, path, mode):
         if not os.access(path, mode):
@@ -477,7 +519,8 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
         return super(GitFS, self).chown(path, uid, gid)
     
     def create(self, path, mode):
-        return os.open(path, os.O_WRONLY | os.O_CREAT, mode)
+        # XXXXX Fixme what should the flags be?
+        return os.open(path, os.O_RDWR | os.O_CREAT, mode)
     
     def flush(self, path, fh):
         self.sync_c.acquire()
@@ -486,9 +529,7 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
         return os.fsync(fh)
 
     def fsync(self, path, datasync, fh):
-        self.sync_c.acquire()
-        self.sync_c.notifyAll()
-        self.sync_c.release()
+        self.needSync()
         return os.fsync(fh)
 
     def fsyncdir(self, path, datasync, fh):
@@ -507,9 +548,16 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
         return os.link(source, target)
     
     listxattr = None
-    mkdir = os.mkdir
     mknod = os.mknod
-    open = os.open
+
+    def mkdir(self, path, mode):
+        return os.mkdir(path, mode)
+    
+    def open(self, path, fip):
+        f = os.open(path, fip)
+        logging.debug("open(%s, %s): %d" %(path, fip, f))
+        return f
+
         
     def read(self, path, size, offset, fh):
         with self.rwlock:
@@ -566,12 +614,12 @@ class GitFS(LoggingMixIn, GitFSStringMixIn, Operations):
 
 def main(origin, branch, local, mountpt):
     dir, fil = os.path.split(mountpt)
-    gitfs = GitFS(origin, branch, local);
+    gitfs = GitFS(origin, branch, local)
     fuse = FUSE(gitfs, mountpt, foreground=True, volname=fil)
     gitfs.destroy(None)
 
 if __name__ == "__main__":
-    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     if len(argv) != 5:
         print 'usage: %s <origin> <branch> <local_repo> <mount_point>' % argv[0]
         exit(1)

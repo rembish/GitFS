@@ -164,7 +164,7 @@ def mount(device, mount_point, options):
             gitfs.destroy(None)
 
 if __name__ == "__main__":
-    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     parser = ArgumentParser(description='mount a GitFS file system')
     parser.add_argument('-a', '--auto', action = 'store_true', default = False)
     parser.add_argument('-d', '--debug', action = 'store_true', default = False)
