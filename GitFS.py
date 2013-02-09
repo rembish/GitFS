@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # GitFS.py -*- python -*-
 # Use Git as a Storage Filesystem
 #
@@ -44,15 +44,16 @@ import datetime
 import os
 import sys
 import socket
+import platform
 
 from threading import Lock, Condition, Thread, Timer, Semaphore
-
 from urlparse import urlparse # used to figure out the host so we can determine if it's remote or local.
 from socket import getaddrinfo, gaierror #call this to translate the host/port into something useable.
 from IPy import IP # use to determine if we should consider the ip address local or not.
 from subprocess import call, check_output
 
-from fuse_old import FUSE, FuseOSError, Operations, LoggingMixIn
+from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+
 from SocketServer import ThreadingUnixStreamServer, BaseRequestHandler, ThreadingMixIn
 from GitFSClient import GitFSClient, GitFSStringMixIn
 #from EasyDialogs import AskYesNoCancel, Message
@@ -86,12 +87,14 @@ class GitStatus(object):
         return self.status
 
     def stagedFiles(self):
+        self.update()
         return self.status.get('renamed',  []) + \
                self.status.get('modified', []) + \
                self.status.get('new file', []) + \
                self.status.get('deleted',  [])
 
     def unstagedFiles(self):
+        self.update()
         return self.status.get('untracked', [])
 
     def clear(self):
@@ -108,6 +111,7 @@ class GitRepo(GitFSStringMixIn, object):
         self.status = GitStatus(path)
         
         self.host = None
+        self.scheme = None
         self.merge_needed = 0
         self.push_c = Semaphore()
         self.forcePush()
@@ -115,6 +119,7 @@ class GitRepo(GitFSStringMixIn, object):
         # prime the push timer pump
         self.timer = Timer(0, self.push, args=())
         self.timer.start()
+        self.forcePush()
         
         if sync:
             self.synchronize()
@@ -138,8 +143,11 @@ class GitRepo(GitFSStringMixIn, object):
         return False
 
     def syncTime(self):
+        if self.scheme == 'file':
+            return 10
+        
         if self.host == None or self.host == "":
-            return 0
+            return 60
 
         try:
             # assume the system caches dns info, so we don't have to.
@@ -153,7 +161,7 @@ class GitRepo(GitFSStringMixIn, object):
             if IP(addressinfo[4][0]).iptype == 'PRIVATE':
                 return 60
             
-        return 60
+        return 60*10
 
     def syncNeeded(self):
         self.status.update()
@@ -165,7 +173,6 @@ class GitRepo(GitFSStringMixIn, object):
         call('git add \"%s\"' %self.escapeQuotes(file), shell=True)
 
     def commit(self, msg):
-        logging.debug('commiting msg %s' %msg)
         call('git commit -am \"%s\"' %self.escapeQuotes(msg), shell=True)
 
     def forcePush(self):
@@ -195,19 +202,20 @@ class GitRepo(GitFSStringMixIn, object):
             if originurl == '':
                 return 1
             
-            logging.debug('originurl = %s' %originurl)
             pr = urlparse(originurl)
-            host = pr.netloc
-            if len(host) == 0:
-                host = originurl
-            self.host, colon, self.port = host.partition(':')
-            self.port = 80
-            logging.debug('repo.port = %s' %self.port)
-            logging.debug('repo.host = %s' %self.host)
+            logging.debug('originurl = %s, pr = %s' %(originurl, pr))
+            self.scheme = pr.scheme
+            if (pr.scheme != 'file'):
+                host = pr.netloc
+                if len(host) == 0:
+                    host = originurl
+                    self.host, colon, self.port = host.partition(':')
+                    self.port = 80
+                    logging.debug('repo.host = %s' %self.host)
 
-            if ('@' in self.host):
-                logging.debug('found @ in %s' %self.host)
-                self.host = self.host.partition('@')[2]
+                if ('@' in self.host):
+                    logging.debug('found @ in %s' %self.host)
+                    self.host = self.host.partition('@')[2]
 
             logging.debug('pull')
             
@@ -289,6 +297,7 @@ class GitFS(GitFSStringMixIn, Operations):
          # Can't use the default rlock here since we want to acquire/release from different threads
         self.sync_c = Condition(Lock())
         self.timer_c = Condition(Lock())
+
         self.timer = None
         self.handlers = { 'ping': self._handlePing, 'lock': self._handleLock, 'unlock': self._handleUnlock,
                           'info': self._handleInfo}
@@ -305,7 +314,6 @@ class GitFS(GitFSStringMixIn, Operations):
 
         self.control_socket_path = self.getControlSocketPath(self.root)
         client = GitFSClient(self.root)
-
         self.needSyncTime = None
 
         try:
@@ -473,7 +481,6 @@ class GitFS(GitFSStringMixIn, Operations):
         # don't do anything until there is a pause.
         self.timer = Timer(10, self.forceSync, args=())
         self.timer.start()
-        
         self.timer_c.release()
 
     def shutdown(self):
@@ -558,7 +565,6 @@ class GitFS(GitFSStringMixIn, Operations):
         logging.debug("open(%s, %s): %d" %(path, fip, f))
         return f
 
-        
     def read(self, path, size, offset, fh):
         with self.rwlock:
             os.lseek(fh, offset, 0)

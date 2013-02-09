@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # gmount.py  -*- python -*-
 # Copyright (c) 2012 Ross Biro
 #
@@ -31,6 +31,7 @@ import os
 import fuse
 import logging
 import sys
+import platform
 
 from argparse import ArgumentParser
 from sys import argv, exit
@@ -101,7 +102,7 @@ def mergeCommandLineAndOptions(commandline, options):
     if commandline.read_only:
         options['ro'] = True
 
-    if commandline.volname != None:
+    if platform.system == 'Darwin' and commandline.volname != None:
         options['volname'] = commandline.volname
 
 def mergeOptions(o1, o2):
@@ -138,7 +139,7 @@ def mergeFSTab(fstabs):
     return fstab
     
 def mount(device, mount_point, options):
-    if 'volname' not in options:
+    if platform.system == 'Darwin' and 'volname' not in options:
         dir, fil = os.path.split(mount_point)
         options['volname'] = fil
         
@@ -178,7 +179,9 @@ if __name__ == "__main__":
     parser.add_argument('--fstab', action = 'append', default = [])
     parser.add_argument('--no-std-fstab','--no_std_fstab', action = 'store_true', default=False)
     parser.add_argument('--gitfs-dir', '--gitfs_dir')
-    parser.add_argument('--volname')
+    if platform.system == 'Darwin':
+        parser.add_argument('--volname')
+
     parser.add_argument('device', nargs='?')
     parser.add_argument('mount_point', nargs='?')
 
