@@ -619,9 +619,14 @@ class GitFS(GitFSStringMixIn, Operations):
             return os.write(fh, data)
 
 def main(origin, branch, local, mountpt):
-    dir, fil = os.path.split(mountpt)
-    gitfs = GitFS(origin, branch, local)
-    fuse = FUSE(gitfs, mountpt, foreground=True, volname=fil)
+    gitfs = GitFS(origin, branch, local);
+    options = {}
+    options['foreground']=True
+    if platform.system == 'Darwin':
+        dir, fil = os.path.split(mountpt)
+        options['volname'] = fil
+
+    fuse = FUSE(gitfs, mountpt, **options)
     gitfs.destroy(None)
 
 if __name__ == "__main__":

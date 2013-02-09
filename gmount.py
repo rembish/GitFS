@@ -44,7 +44,7 @@ def readFSTab(file, fstab):
         return
 
     if not os.access(file, os.R_OK):
-        print '%s not readable' %file
+        print "%s not readable" %(file)
         return
 
     if os.path.isdir(file):
