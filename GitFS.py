@@ -36,28 +36,31 @@
 
 from __future__ import with_statement
 
-from errno import EACCES, EBUSY
-from sys import argv, exit
-from time import time
 import logging
 import datetime
 import os
 import sys
 import socket
 import platform
+import random
 
+from errno import EACCES, EBUSY
+from sys import argv, exit
+from time import time
 from threading import Lock, Condition, Thread, Timer, Semaphore
 from urlparse import urlparse # used to figure out the host so we can determine if it's remote or local.
 from socket import getaddrinfo, gaierror #call this to translate the host/port into something useable.
 from IPy import IP # use to determine if we should consider the ip address local or not.
 from subprocess import call, check_output
+from mUUID import mUUID;
 
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 
 from SocketServer import ThreadingUnixStreamServer, BaseRequestHandler, ThreadingMixIn
-from GitFSClient import GitFSClient, GitFSStringMixIn
-#from EasyDialogs import AskYesNoCancel, Message
+from GitFSClient import GitFSClient
+from GitFSBase import GitFSBase, GitFSError
 from Packetize import PacketizeMixIn
+from HostInfo import HostInfo
 
 class GitStatus(object):
 
@@ -100,7 +103,7 @@ class GitStatus(object):
     def clear(self):
         self.status.clear()
 
-class GitRepo(GitFSStringMixIn, object):
+class GitRepo(GitFSBase, object):
 
     def __init__(self, path, origin, branch, sync=False):
         self.path = path
@@ -284,68 +287,85 @@ class GitRepo(GitFSStringMixIn, object):
         self.timer = None
         self.push_c.release()
 
-class GitFS(GitFSStringMixIn, Operations):
+class GitFS(GitFSBase, Operations):
     """A simple filesystem using Git and FUSE.
     """
     
-    def __init__(self, origin, branch='master', path='.'):
+    def __init__(self, origin, branch='master', path='.', mount_point='.'):
+        super(GitFS, self).__init__()
         self.origin = origin
         self.branch = branch
         self.root = os.path.realpath(path)
+        self.mount_point = mount_point
         self.halt = False
         self.rwlock = Lock()
          # Can't use the default rlock here since we want to acquire/release from different threads
         self.sync_c = Condition(Lock())
         self.timer_c = Condition(Lock())
 
+        self.id = None
         self.timer = None
         self.handlers = { 'ping': self._handlePing, 'lock': self._handleLock, 'unlock': self._handleUnlock,
-                          'info': self._handleInfo}
+                          'info': self._handleInfo, 'getConfig': self._getConfig }
         self.lock_timer = None
         self.lock_lock = Condition()
         self.locks = {}
         self.lock_expire_time = time()
         
-        self.control_dir = self.getControlDirectory(self.root)
+        self.control_dir = self.getControlDirectory()
         try:
-            os.mkdir(self.control_dir)
+            os.makedirs(self.control_dir)
         except OSError:
             pass
 
-        self.control_socket_path = self.getControlSocketPath(self.root)
-        client = GitFSClient(self.root)
-        self.needSyncTime = None
-
+        self.info_dir = self.getInfoDirectory(self.root)
         try:
-            if client.pingRemote():
-                # There is another file system mounted.
-                logging.debug("Exiting because file system already mounted.\n")
+            os.makedirs(self.info_dir)
+        except OSError:
+            pass
+
+        self.control_socket_path = self.getControlSocketPath(self.getID(), server=True)
+        self.lockGitFSDir();
+        try:
+            try:
+                client = GitFSClient.getClientByPath(self.mount_point, False)
                 raise FuseOSError(EBUSY)
-        except socket.error as se:
-            logging.debug("socket.error = %s" %se)
-            pass
 
-        client.close()
-        client = None
+            except GitFSError:
+                pass
 
-        try:
-            os.remove(self.control_socket_path)
-        except OSError:
-            pass
-        self.control_server = None
-        self.control_server = ThreadingUnixStreamServer(self.control_socket_path, type("GitFSRequestHandler",
-                                                                              (PacketizeMixIn, BaseRequestHandler,object),
-        dict(fs=self, dictFromString=self.parseDict, stringFromDict=self.marshalDict,
-             handleDict=lambda s,d: s.fs._handleRequest(s,d))))
-        self.control_server.daemon_threads = True
+            try:
+                os.remove(self.control_socket_path)
+            except OSError:
+                pass
 
-            # setup the threads last so that they don't prevent an exit.       
-        self.control_thread = Thread(target = self.control_server.serve_forever, args=())
-        self.control_thread.start()
+            self.control_server = None
+            self.control_server = ThreadingUnixStreamServer(self.control_socket_path, type("GitFSRequestHandler",
+                                            (PacketizeMixIn, BaseRequestHandler, object),
+                                            dict(fs=self, dictFromString=self.parseDict, stringFromDict=self.marshalDict,
+                                                handleDict=lambda s,d: s.fs._handleRequest(s,d))))
+            self.control_server.daemon_threads = True
+
+                # setup the threads last so that they don't prevent an exit.       
+            self.control_thread = Thread(target = self.control_server.serve_forever, args=())
+            self.control_thread.start()
+
+        finally:
+            self.unlockGitFSDir();
+
+        mt = self.getMTab()
+        mt[mount_point] = self.getID()
+        self.updateMTab(mt)
+
         self.repo = GitRepo(path, origin, branch, sync=True)
         self.sync_thread = Thread(target=self._sync, args=())
         self.sync_thread.start()
 
+    def getID(self):
+        if self.id is None:
+            self.id = mUUID.getUUIDFromFile(self.getUUIDFile(self.root), create=True).toString()
+        return self.id
+    
     def _lockWithTimeOut(self, name, t):
         if t <= 0:
             return
@@ -434,7 +454,14 @@ class GitFS(GitFSStringMixIn, Operations):
         self._respond(request, {'status': 'ok'})
 
     def _handleInfo(self, reqDict, request):
-        self._respond(request, {'status': 'ok', 'origin': self.repo.origin, 'branch': self.repo.branch })
+        self._respond(request,{'status': 'ok', 'origin': self.repo.origin,
+                               'branch': self.repo.branch, 'root':self.root,
+                               'path':self.mount_point })
+        
+    def _getConfig(self, reqDict, request):
+        key = reqDict['key']
+        resp = self.getConfigForInstance(key)
+        self._respond(request, {'status': 'ok', key:resp })
 
     def _sync(self):
         while True:
@@ -460,6 +487,72 @@ class GitFS(GitFSStringMixIn, Operations):
                 self.repo.push()
                 self.sync_c.release()
                 break
+
+    def getHostInfo():
+        if self.hostinfo is None:
+            self.hostinfo = HostInfo()
+        self.hostinfo.update()
+        return self.hostinfo
+                
+    def matchesInstance(self, key):
+        """ returns a number determinging how well the past in key matches the current instance."""
+        if key == 'default':
+            return .1 #Very weak match
+        
+        hostinfo = self.getHostInfo()
+        try:
+            ip = socket.inet_pton(key)
+            return hostinfo.matchAddress(ip)
+        except SocketError:
+            pass
+
+        return hostinfo.matchHostName(key)
+
+    def getConfigForInstanceSingleFile(self, key, name):
+        logging.debug('getConfigForInstanceSingleFile(%s, %s)' %(key, name))
+        c = self.getConfig(name)
+        if c is None:
+            return None
+        match=0
+        if key not in c:
+            return None
+        v = c[key]
+        logging.debug('getConfigForInstanceSingleFile(%s, %s) value=%s' %(key, name, v))
+        if isinstance(v, dict):
+            rv = None
+            for (key, value) in v.iteritems():
+                tm = self.matchesInstance(key)
+                if tm > match:
+                    match = tm
+                    rv = value
+            v = rv
+            
+        if v is None:
+            return None
+
+        if isinstance(v, list):
+            v = random.choose(v)
+
+        return (match, v)
+        
+    def getConfigForInstance(self, key):
+        match=0
+        value=None
+        logging.debug('getConfigForInstance(%s)' %key)
+        if key in self.config_file_priorities:
+            filenames = self.config_file_priorities[key]
+        else:
+            filenames = self.config_file_priorities['default']
+            
+        for name in filenames:
+            a = self.getConfigForInstanceSingleFile(key, name)
+            if a is None:
+                continue
+            (m, v) = a
+            if (m >= match):
+                match = m
+                value = v
+        return value
 
     def forceSync(self):
         logging.debug('forceSync()')
@@ -619,7 +712,7 @@ class GitFS(GitFSStringMixIn, Operations):
             return os.write(fh, data)
 
 def main(origin, branch, local, mountpt):
-    gitfs = GitFS(origin, branch, local);
+    gitfs = GitFS(origin, branch, local, mountpt);
     options = {}
     options['foreground']=True
     if platform.system == 'Darwin':
@@ -630,7 +723,7 @@ def main(origin, branch, local, mountpt):
     gitfs.destroy(None)
 
 if __name__ == "__main__":
-    #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     if len(argv) != 5:
         print 'usage: %s <origin> <branch> <local_repo> <mount_point>' % argv[0]
         exit(1)

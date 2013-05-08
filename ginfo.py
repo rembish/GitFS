@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-# gmkfs.py  -*- python -*-
-# Copyright (c) 2012 Ross Biro
+# gsh.py  -*- python -*-
+# Copyright (c) 2013 Ross Biro
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,24 +16,32 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-"""gsync grabs a lock on the filesystem, then does a pull/push.  This syncs the local to the remote.  Useful before
-intiating a remote build.
+"""ginfo.py export a bunch of information about gitfs instances on the system
+for use by shell commands.  In particular
+    -r <id> gives the root of a mounted file system with a particular id.
 """
 
 import logging
 
+from sys import argv, stderr
 from argparse import ArgumentParser
-from sys import argv, exit, stderr
+
 from GitFSClient import GitFSClient
 
-if __name__ == "__main__":
-    logging.basicConfig(stream=stderr, level=logging.DEBUG)
+def main(argv):
     parser = ArgumentParser(description='sync a local filesystem with the remote sourde.')
-    parser.add_argument('directory')
+    cmdline = {}
+    parser.add_argument('-r', '--find-root', action='append')
     
     cmdline = parser.parse_args(argv[1:])
-    logging.debug('cmdline=%s' %cmdline)
-
-    client = GitFSClient.getClientByPath(cmdline.directory)
-    client.sync()
     
+    if 'find_root' in cmdline:
+        for i in cmdline.find_root:
+            c = GitFSClient.getClientByID(i)
+            if c is not None:
+                r = c.getMountPoint()
+                if r is not None:
+                    print '%s\n' %r
+
+if __name__ == "__main__":
+    main(argv)

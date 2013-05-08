@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# gmkfs.py  -*- python -*-
+# SelectServer.py  -*- python -*-
 # Copyright (c) 2012 Ross Biro
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,24 +16,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-"""gsync grabs a lock on the filesystem, then does a pull/push.  This syncs the local to the remote.  Useful before
-intiating a remote build.
-"""
 
-import logging
-
-from argparse import ArgumentParser
-from sys import argv, exit, stderr
-from GitFSClient import GitFSClient
-
-if __name__ == "__main__":
-    logging.basicConfig(stream=stderr, level=logging.DEBUG)
-    parser = ArgumentParser(description='sync a local filesystem with the remote sourde.')
-    parser.add_argument('directory')
-    
-    cmdline = parser.parse_args(argv[1:])
-    logging.debug('cmdline=%s' %cmdline)
-
-    client = GitFSClient.getClientByPath(cmdline.directory)
-    client.sync()
-    
+class SelectMixIn:
+    """ This mixin when applied to a socket servers, changes the model to use a single thread and dispatch
+    requests to different handleers based on the results of calling select.  It keeps track of all the requests
+    and calls one whenever there is room for reading or writting, as appropriate.
+    """

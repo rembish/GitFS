@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # GitFSClient.py  -*- python -*-
-# Copyright (c) 2012 Ross Biro
+# Copyright (c) 2012-2013 Ross Biro
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -35,141 +35,124 @@ import logging
 import errno
 import time
 
-from Packetize import PacketizeMixIn
+from glob import iglob
+
 from threading import Thread
+from subprocess import call
+from GitFSBase import GitFSBase, GitFSError
 
-class GitFSStringMixIn:
-    """A collection of functions that manipulate strings and all the
-    different components have to do in the same way.
-    """
-    
-    def escapeQuotes(self, string):
-        string.replace("\\", "\\\\")
-        string.replace("\"", "\\\"")
-        string.replace("$", "\\$")
-        string.replace("`", "\\`")
-        #string.replace("!", "\\!") # If history is enable, we may have problems.
-        return string
+class GitFSClient(GitFSBase, object):
+    @staticmethod
+    def getClientByPath(path, recurse=True):
+        """ Locate a client for a gitfs path. """
+        path = os.path.realpath(os.path.abspath(path))
 
-    def escapePath(self, path):
-        #logging.debug('escapePath(%s)' %path)
-        if path == '/' or path == '':
-            return path
-        dir, fil = os.path.split(path)
+        while path != os.path.sep:
+            logging.debug('getClientByPath: checking %s' %path)
+            if os.path.ismount(path):
+                logging.debug('%s is a mount point' %path)
+                path = os.path.realpath(path)
+                client = None
 
-        if fil != '.' and fil != '..' and len(fil) > 0 and fil[0] in '@._':
-            fil = '@' + fil
-        return os.path.join(self.escapePath(dir), fil)
+                #try:
+                client = GitFSClient(path)
+                #except GitFSError as ge:
+                #   logging.debug('not a gitfs path: %s' %ge)
+                #  pass
+                
+                if client is not None and client.pingRemote():
+                    return client
 
-    def unescapePath(self, path):
-        logging.debug('unescapePath(%s)' %path)
-        if path == '/' or path == '':
-            return path
-        dir, fil = os.path.split(path)
-
-        if fil != '.' and fil != '..' and len(fil) > 0 and fil[0] == '@':
-            fil = fil[1:]
+            if not recurse:
+                break
             
-        return os.path.join(self.unescapePath(dir), fil)
+            path = os.path.abspath(os.path.join(path, os.pardir))
 
-    def isValidPath(self, path):
-        if path == '/' or path == '':
-            return True
+        raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
 
-        dir, fil = os.path.split(path)
-        
-        if fil != '.' and fil != '..' and len(fil) > 0:
-            if fil[0] == '.':
-                return False
-            if fil[0] == '@' and (len(fil) < 2 or not fil[1] in '@._') :
-                return False
-
-        return self.isValidPath(dir)
-
-    def parseDict(self, data):
-        dict = {}
-        for line in data.splitlines():
-            line.strip()
-            if line != '':
-                key, colon, value = line.partition(':')
-                dict[key] = value
-            # endif
-        # end for
-        return dict
-
-    def marshalDict(self, dict):
-        data=''
-        for key in dict.keys():
-            data = data + key + ':' + dict[key] + "\n"
-        return data
-
-    def getControlDirectory(self, root):
-        return root+'/@gitfs'
-
-    def getControlSocketPath(self, root):
-        return self.getControlDirectory(root) + '/control'
-
-    def checkDict(self, dict, **kwargs):
-        c = dict(**kwargs)
+    @staticmethod
+    def getClientByID(ident):
+        base = GitFSBase()
+        base.lockGitFSDir()
         try:
-            for key in c:
-                if dict[key] != c[key]:
-                    return False
-            return True
-        except KeyError:
-            return False
+            client = GitFSClient.getClientByIDNoLock(ident)
+        finally:
+            base.unlockGitFSDir()
+        return client
 
-class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
+    @staticmethod
+    def applyToIdents(ident, func, cleanup_on_exception=True):
+        r = []
+        if '.' not in ident:
+            ident = ident + '.*'
+        base = GitFSBase()
+        csp = base.getControlSocketPath(ident)
+        logging.debug('trying %s for ident %s' %(csp, ident))
+        f = iglob(csp)
+        
+        for sockname in f:
+            try:
+                r.append(func(sockname))
+            except Exception as e:
+                logging.debug('apply to Idents caught %s' %e)
+                if cleanup_on_exception:
+                    try:
+                        os.remove(sockname)
+                    except OSError:
+                        pass
+        return r
+            
+    @staticmethod
+    def getClientBySockName(sockname):
+        base = GitFSBase()
+        base.socket_path = sockname
+        info = base.getInfoRemote()
+        if 'path' in info:
+            return GitFSClient(info['path'], sockname)
+        raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs socket.")
 
-    def __init__(self, path):
-        self.socket = None
+    @staticmethod
+    def checkSocketName(sockname):
+        base = GitFSBase()
+        base.socket_path = sockname
+        info = base.getInfoRemote()
+        logging.debug('attempting getinfo for %s returned %s' %(sockname, info))
+        if 'path' in info:
+            return sockname
+        raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs socket.")
+
+    @staticmethod
+    def getClientByIDNoLock(ident):
+        """ Locate a client based on it's id.  If it's mounted in
+        mutiple places, only the first one found will be returned.
+        Append the '.' followed by the pid to the id to request a
+        specific client.
+        """
+        clients = GitFSClient.applyToIdents(ident, lambda s:GitFSClient.getClientBySockName(s) )
+        if len(clients) > 0:
+            return clients[0]
+        return None
+
+    def __init__(self, path, ident=None):
+        super(GitFSClient, self).__init__()
         self.root = os.path.realpath(path)
-        self.control_path = self.getControlDirectory(self.root)
-        self.socket_path = self.getControlSocketPath(self.root)
+        self.control_path = self.getControlDirectory()
+        self.id = ident
+            
+        if self.getID() is None:
+            raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
+
+        if '.' not in self.getID():
+            r = GitFSClient.applyToIdents(self.getID(), lambda s:GitFSClient.checkSocketName(s))
+            if len(r) == 0:
+                raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
+            self.socket_path = r[0]
+        else:
+            self.socket_path = self.getControlSocketPath(self.getID())
+        
         logging.debug("socket_path = %s" %self.socket_path)
-        self.stringFromDict=self.marshalDict
-        self.dictFromString=self.parseDict
-        self.packet=[]
-        self._length_bytes = 2
         self.holdLock = False
         self.progressChecker = None
-
-    def _sendDict(self, dict):
-        if self.socket == None:
-            if not os.path.exists(self.socket_path):
-                raise socket.error("Socket Not Found")
-            self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.socket.connect(self.socket_path)
-            self.socket.settimeout(2)
-            self.request = self.socket
-        self.sendDict(dict)
-
-    def _recvDict(self):
-        self.getPacket()
-        if len(self.packet) == 0:
-            return None
-        dict = self.packet[0]
-        self.packet=[]
-        return dict
-
-    def handleDict(self, dict):
-        self.packet.append(dict)
-    
-    def executeRemote(self, dict):
-        while True:
-            try:
-                self._sendDict(dict)
-                dict = self._recvDict()
-                return dict
-            except socket.timeout as to:
-                return None
-            except socket.error as so:
-                logging.debug("socket error so=%s" %so)
-                if so.errno == errno.EPIPE:
-                    self.socket = None
-                else:
-                    raise so
-
 
     def lockRemote(self):
         """Requests the other side lock the file system so that there
@@ -216,17 +199,6 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
         except KeyError:
             return False
 
-    def getInfoRemote(self):
-        res = self.executeRemote({'action': 'info'})
-        if res == None:
-            return {}
-        try:
-            if res['status'] != 'ok':
-                return {}
-            return res
-        except KeyError:
-            return {}
-
     def pingRemote(self):
         res = self.executeRemote({'action': 'ping'})
         if res == None:
@@ -238,6 +210,58 @@ class GitFSClient(GitFSStringMixIn, PacketizeMixIn, object):
 
     def close(self):
         return
+
+    def makeRootRelative(self, path):
+        if path.startswith(self.root):
+            return path[len(self.root):]
+        raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
+
+    def getConfigForInstance(self, key):
+        res = self.executeRemote({'action':'getConfig', 'key':key})
+        logging.debug('getConfigForInstance(%s) got %s' %(key, res))
+        if res is not None and key in res:
+            return res[key]
+        return None
+        
+    def sync(self):
+        # now do the pull/push combination.
+        # XXXXX Fixme: need a library to access git, not just shelling out.
+        # this currently has to be done locally since
+        # we are merging and we don't yet have a remote merge tool.
+        # assumes it's run from beneath the git directory. 
+        info = self.getInfoRemote();
+        if 'origin' not in info:
+            info['origin'] = 'origin'
+        if 'branch' not in info:
+            info['branch'] = 'master'
+
+        self.lockRemoteAndHold()
+        try:
+            os.chdir(info['root'])
+            # now do the pull/push combination.
+            # XXXXX Fixme: need a library to access git, not just shelling out.
+            call('git commit -a', shell=True)
+            call('git pull \"%s\" \"%s\"' %(info['origin'], info['branch']), shell=True)
+            call('git mergetool', shell=True)
+            call('git commit -a', shell=True)
+            call('git push \"%s\" \"%s\"' %(info['origin'], info['branch']), shell=True)
+        
+        finally:
+            self.unlockRemote()
+
+    def getID(self):
+        if self.id is not None:
+            return self.id
+        
+        mt = self.getMTab()
+        if self.root not in mt:
+            return None
+        self.id = mt[self.root]
+        return self.id
+
+    def getMountPoint(self):
+        return self.root
+            
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)

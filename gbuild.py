@@ -27,28 +27,12 @@ from argparse import ArgumentParser
 from sys import argv, exit
 from subprocess import call
 from GitFSClient import GitFSClient
+from gsh import GSH
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-    parser = ArgumentParser(description='run a build on a remote host.')
-    parser.add_argument('-b', '--build')
-    parser.add_argument('-r', '--remote', action='store_true', default = False)
-    parser.add_argument('directory')
-    
-    cmdline = parser.parse_args(argv[1:])
-    logging.debug('cmdline=%s' %cmdline)
-
-    if (options['remote']):
-        os.cwd(options['directory']);
-        sys.execvp('make'. options['args']);
-        raise Exception('Can\'t Happen')
-    
-    p, f = os.path.split(cmdline.directory)
-    f = '.' + f
-    d = os.path.join(p, f)
-    os.chdir(d)
-
-    client = GitFSClient(d)
+    cwd = os.getcwd()
+    client = GitFSClient.getClientByPath(cwd)
     info=client.getInfoRemote()
     logging.debug("received info: %s" %info)
     
@@ -57,20 +41,21 @@ if __name__ == "__main__":
     if 'branch' not in info:
         info['branch'] = 'master'
         
-    client.lockRemoteAndHold()
-
-    try:
-        # now do the pull/push combination.
-        # XXXXX Fixme: need a library to access git, not just shelling out.
-        call('git commit -a', shell=True)
-        call('git pull \"%s\" \"%s\"' %(info['origin'], info['branch']), shell=True)
-        call('git mergetool', shell=True)
-        call('git commit -a', shell=True)
-        call('git push \"%s\" \"%s\"' %(info['origin'], info['branch']), shell=True)
-        
-    finally:
-        client.unlockRemote()
+    client.sync()
 
     # Now, we need to run the remote version.
-    build = client.getBuildMachine()
+    host = client.getConfigForInstance('build_host')
+    if host is None:
+        host='localhost'
+        
+    command = client.getConfigForInstance('build_command')
+    if command is None:
+        command = 'make'
 
+    command_args = [command ] + sys.argv[1:]
+    # XXXX FXIME ned a way to massage the arguments before adding them to the command array.  Read something from the
+    # config file and exec it.
+    
+    gsh = GSH(command)
+    ssh = gsh.execute(host)
+    ssh.displayAndWait()

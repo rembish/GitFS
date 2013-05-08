@@ -158,14 +158,14 @@ def mount(device, mount_point, options):
 
     if 'debug' not in options:
         logging.debug ('mounting %s on %s with options %s' %(device, mount_point, options))
-        gitfs = GitFS.GitFS(origin, branch, device)
+        gitfs = GitFS.GitFS(origin, branch, device, mount_point)
         try:
             fuse = FUSE(gitfs, mount_point, **options)
         finally:
             gitfs.destroy(None)
 
 if __name__ == "__main__":
-    #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     parser = ArgumentParser(description='mount a GitFS file system')
     parser.add_argument('-a', '--auto', action = 'store_true', default = False)
     parser.add_argument('-d', '--debug', action = 'store_true', default = False)
