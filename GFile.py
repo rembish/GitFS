@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # GFile.py  -*- python -*-
 # Copyright (c) 2013 Ross Biro
 #

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # GitFSBase.py  -*- python -*-
 # Copyright (c) 2012-2013 Ross Biro
 #
@@ -98,7 +98,14 @@ class GitFSStringMixIn:
         return data
     
     def getGitFSDir(self):
-        return os.path.expanduser('~/.gitfs')
+        path = os.path.expanduser('~/.gitfs')
+        if not self.gitfs_dir_exists:
+            try:
+                os.makedirs(path)
+                self.gitfs_dir_exists = True
+            except OSError:
+                pass
+        return path
     
     def getControlDirectory(self):
         return os.path.join(self.getGitFSDir(),'control')
@@ -143,6 +150,7 @@ class GitFSBase(PacketizeMixIn, GitFSStringMixIn, object):
         self.control_socket_path = None
         self.stringFromDict=self.marshalDict
         self.dictFromString=self.parseDict
+        self.gitfs_dir_exists = False # really just means unknown
         self._length_bytes = 2
         self.packet=[]
         # priorities are from least to greatest.
@@ -173,15 +181,17 @@ class GitFSBase(PacketizeMixIn, GitFSStringMixIn, object):
     def getMTabFileName(self):
         return os.path.join(self.getGitFSDir(), 'mtab')
 
-    def getMTab(self):
+    def getMTab(self, lock=True):
         cf = ConfigFile()
-        self.lockGitFSDir()
+        if lock:
+            self.lockGitFSDir()
         try:
             cf.readFile(self.getMTabFileName())
         except IOError:
             pass
         finally:
-            self.unlockGitFSDir()
+            if lock:
+                self.unlockGitFSDir()
         logging.debug('read configuration: %s\n' %cf.getConfig())
         return cf.getConfig()
 

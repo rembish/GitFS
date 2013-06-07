@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # GitFSClient.py  -*- python -*-
 # Copyright (c) 2012-2013 Ross Biro
 #
@@ -43,7 +43,7 @@ from GitFSBase import GitFSBase, GitFSError
 
 class GitFSClient(GitFSBase, object):
     @staticmethod
-    def getClientByPath(path, recurse=True):
+    def getClientByPath(path, recurse=True, lock=True):
         """ Locate a client for a gitfs path. """
         path = os.path.realpath(os.path.abspath(path))
 
@@ -55,7 +55,7 @@ class GitFSClient(GitFSBase, object):
                 client = None
 
                 #try:
-                client = GitFSClient(path)
+                client = GitFSClient(path, lock=lock)
                 #except GitFSError as ge:
                 #   logging.debug('not a gitfs path: %s' %ge)
                 #  pass
@@ -133,22 +133,24 @@ class GitFSClient(GitFSBase, object):
             return clients[0]
         return None
 
-    def __init__(self, path, ident=None):
+    def __init__(self, path, ident=None, lock=True):
         super(GitFSClient, self).__init__()
         self.root = os.path.realpath(path)
         self.control_path = self.getControlDirectory()
         self.id = ident
             
-        if self.getID() is None:
+        if self.getID(lock) is None:
             raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
 
-        if '.' not in self.getID():
-            r = GitFSClient.applyToIdents(self.getID(), lambda s:GitFSClient.checkSocketName(s))
+        logging.debug("getID() returns %s" %self.getID(lock))
+
+        if '.' not in self.getID(lock):
+            r = GitFSClient.applyToIdents(self.getID(lock), lambda s:GitFSClient.checkSocketName(s))
             if len(r) == 0:
                 raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
             self.socket_path = r[0]
         else:
-            self.socket_path = self.getControlSocketPath(self.getID())
+            self.socket_path = self.getControlSocketPath(self.getID(lock))
         
         logging.debug("socket_path = %s" %self.socket_path)
         self.holdLock = False
@@ -249,14 +251,16 @@ class GitFSClient(GitFSBase, object):
         finally:
             self.unlockRemote()
 
-    def getID(self):
+    def getID(self, lock=True):
         if self.id is not None:
             return self.id
         
-        mt = self.getMTab()
+        mt = self.getMTab(lock)
         if self.root not in mt:
             return None
+        logging.debug("getMTab returned %s" %mt)
         self.id = mt[self.root]
+        logging.debug("id now %s" %self.id)
         return self.id
 
     def getMountPoint(self):

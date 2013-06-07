@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # GitFSClient.py  -*- python -*-
 # Copyright (c) 2012-2013 Ross Biro
 #

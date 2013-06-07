@@ -57,5 +57,5 @@ if __name__ == "__main__":
     # config file and exec it.
     
     gsh = GSH(command)
-    ssh = gsh.execute(host)
-    ssh.displayAndWait()
+    gsh.execute(host)
+    gsh.displayAndWait()

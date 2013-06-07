@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # Packetize.py  -*- python -*-
 # Copyright (c) 2012 Ross Biro
 #

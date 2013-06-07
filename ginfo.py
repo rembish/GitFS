@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # gsh.py  -*- python -*-
 # Copyright (c) 2013 Ross Biro
 #
@@ -29,13 +29,12 @@ from argparse import ArgumentParser
 from GitFSClient import GitFSClient
 
 def main(argv):
-    parser = ArgumentParser(description='sync a local filesystem with the remote sourde.')
-    cmdline = {}
+    parser = ArgumentParser(description='get information about a gitfs filesystem')
     parser.add_argument('-r', '--find-root', action='append')
     
     cmdline = parser.parse_args(argv[1:])
     
-    if 'find_root' in cmdline:
+    if 'find_root' in cmdline and cmdline.find_root is not None:
         for i in cmdline.find_root:
             c = GitFSClient.getClientByID(i)
             if c is not None:

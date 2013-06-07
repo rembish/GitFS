@@ -299,6 +299,7 @@ class GitFS(GitFSBase, Operations):
         self.mount_point = mount_point
         self.halt = False
         self.rwlock = Lock()
+        self.need_sync_time = None
          # Can't use the default rlock here since we want to acquire/release from different threads
         self.sync_c = Condition(Lock())
         self.timer_c = Condition(Lock())
@@ -328,7 +329,7 @@ class GitFS(GitFSBase, Operations):
         self.lockGitFSDir();
         try:
             try:
-                client = GitFSClient.getClientByPath(self.mount_point, False)
+                client = GitFSClient.getClientByPath(self.mount_point, False, False)
                 raise FuseOSError(EBUSY)
 
             except GitFSError:
@@ -478,7 +479,7 @@ class GitFS(GitFSBase, Operations):
                     if not self.repo.synchronize():
                         #sync failed, we need to try again.
                         self.needSync()
-                    self.needSyncTime = None
+                    self.need_sync_time = None
                 except Exception as e:
                     logging.debug("synchronize threw exception %s" %e)
                 self.sync_c.release() # can't release this until sync is complete because we can't change files while we sync.
@@ -563,11 +564,11 @@ class GitFS(GitFSBase, Operations):
     def needSync(self):
         logging.debug('needSync()')
         self.timer_c.acquire()
-        if self.needSyncTime == None:
-            self.needSyncTime = time()
+        if self.need_sync_time is None:
+            self.need_sync_time = time()
 
         if self.timer != None:
-            if time() - self.needSyncTime > 5*60:
+            if time() - self.need_sync_time > 5*60:
                 return
             self.timer.cancel()
 
