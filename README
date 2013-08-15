@@ -45,6 +45,19 @@ Based on gitfs.py with the following copyright:
 
 Note that according to the original license, the above copyright notice must be preserved.
 
+***** XXXXX Warning, design flaw: *****
+It appears that the original gitfs was based on a simple example that
+comes with fuse.py.  The example has a design limitation in that it
+can really only work with fast repositories.  Otherwise, the kernel
+fuse code will time out and disconnect the file system.  The obvious
+solution is to separate the code that accesses git from the code that
+accesses the data.  This requires creating a log so that the
+filesystem can read and write while the files that git sees are
+stable.  So a simple log is being implemented.  The first incarnation
+will have nothing to prevent it from growing too large, or for
+cleaning up caches.  Later implementations may contain such code.
+***** Fix in progress, no ETA *****
+
 Still very basic and untested, but as everything it has lofty goals.
 It should be usable now.  The important thing to understand is that
 currently certain characters are escaped when they appear at the
