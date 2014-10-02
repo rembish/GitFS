@@ -21,6 +21,7 @@ import sys
 import tempfile
 import os
 import random
+import shutil
 
 from threading import Thread, Lock, Condition
 
@@ -39,7 +40,7 @@ class Queue(object):
 
     def cleanup(self):
         shutil.rmtree(self.dir)
-        
+
     def qsize(self):
         with self.lock:
             return len(self.queue)
@@ -93,14 +94,14 @@ class Queue(object):
                     return None
                 logging.debug("waiting for more items, block=%s item=%s.\n" %(block, item))
                 self.more.wait()
-        
+
         with item.lock:
             path = item.path(self.directory)
             item.refresh(path)
             item.remove(path)
             return item
 
-    
+
     def get_nowait(self):
         return self.get(block=False)
 
@@ -110,7 +111,7 @@ class Queue(object):
                 self.in_process.remove(item)
                 with self.less:
                     self.less.notifyAll()
-            
+
     def join(self):
         with self.less:
             while len(self.in_process) > 0 or len(self.queue) > 0:
@@ -158,7 +159,7 @@ def getTest(q):
     while i is not None:
         q.task_done(i)
         i = q.get_nowait()
-        
+
 def main():
     q = Queue(directory='/', method=lambda s: s.queue.pop() )
     q.put(ItemBase())
@@ -200,10 +201,10 @@ def main():
     getTest(q)
     logging.debug ("Joining join thread.")
     jt.join()
-    
+
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     main ()
 
 
-    
+

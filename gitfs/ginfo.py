@@ -21,19 +21,18 @@ for use by shell commands.  In particular
     -r <id> gives the root of a mounted file system with a particular id.
 """
 
-import logging
-
-from sys import argv, stderr
+from sys import argv
 from argparse import ArgumentParser
 
-from GitFSClient import GitFSClient
+from gitfs.GitFSClient import GitFSClient
+
 
 def main(argv):
     parser = ArgumentParser(description='get information about a gitfs filesystem')
     parser.add_argument('-r', '--find-root', action='append')
-    
+
     cmdline = parser.parse_args(argv[1:])
-    
+
     if 'find_root' in cmdline and cmdline.find_root is not None:
         for i in cmdline.find_root:
             c = GitFSClient.getClientByID(i)

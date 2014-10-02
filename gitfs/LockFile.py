@@ -57,6 +57,8 @@ import socket
 from time import time, sleep
 from glob import iglob
 from random import random
+from stat import ST_MTIME
+
 
 class LockFile(object):
     @staticmethod
@@ -70,7 +72,7 @@ class LockFile(object):
             if e.errno == errno.ESRCH:
                 return False
         return True
-    
+
     def __init__(self, path):
         """ path should be the path of the lockfile that will be created in the end.
         """
@@ -84,11 +86,11 @@ class LockFile(object):
         for f in locks:
             try:
                 s = os.stat(f)
-                if time() - stat.ST_MTIME(s) > 2*self.temp_lock_life:
+                if time() - ST_MTIME(s) > 2*self.temp_lock_life:
                     os.remove(f)
             except OSError:
                 pass
-    
+
     def lock(self, timeout = None):
         """ timeout should be the number of seconds to try before giving up
         and returning false. 0 means try and give up write away.  None
@@ -114,11 +116,11 @@ class LockFile(object):
                     continue
                 except StopIteration:
                     pass
-                
+
                 if time() - lock_create_time > self.temp_lock_life:
                     print "lock file too old.\n"
                     continue
-                
+
                 if (os.path.exists(self.path)):
                     f = open (self.path, 'rb')
                     host_pid = f.readline()
@@ -158,22 +160,13 @@ class LockFile(object):
                         if now + rand_delay - start_time >= timeout:
                             rand_delay = timeout - now - start_time
                         sleep(rand_delay)
-            
-                            
+
+
     def unlock(self):
         try:
             os.remove(self.path)
         except OSError:
             pass
-    
+
     def processIsAlive(self, pid):
         return LockFile.pid_exists(int(pid))
-        
-        
-if __name__ == "__main__":
-    #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-    if len(argv) != 2:
-        print 'usage: %s file' % argv[0]
-        exit(1)
-    main (argv[1])
-

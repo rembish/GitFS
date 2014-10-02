@@ -18,8 +18,9 @@
 #
 
 import uuid
-from glob import iglob
-from LockFile import LockFile
+
+from gitfs.LockFile import LockFile
+
 
 class mUUID(object):
     """UUID class to generate and work with UUIDs
@@ -46,7 +47,7 @@ class mUUID(object):
             return uuid
         finally:
             lf.unlock()
-    
+
     def __init__(self):
         self.uuid = None
 
@@ -60,21 +61,21 @@ class mUUID(object):
                 line = line.lstrip()
                 if line[0] != '#':
                     break
-            
+
             if len(line) > 0 and line[0] != '#':
                 line = line.rstrip()
                 self.uuid = uuid.UUID(line)
                 return self
-            
+
             return None
-        
+
         except IOError:
             return None
 
     def writeToFile(self, filename):
         if self.uuid is None:
             return False
-        
+
         try:
             f = open(filename, 'w')
             f.write(self.uuid.urn+'\n')
@@ -83,7 +84,7 @@ class mUUID(object):
         except OSError:
             return False
 
-    
+
     def toString(self):
         if self.uuid is None:
             return 'None'
@@ -93,6 +94,6 @@ class mUUID(object):
         if self.uuid is None:
             return False
         return True
-    
 
-        
+
+

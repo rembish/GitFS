@@ -28,18 +28,17 @@ can perform operations like complex merges.
 The primary class that is exported is GitFSSClient.
 
 """
-import socket
 import os
 import sys
 import logging
-import errno
 import time
-
 from glob import iglob
-
 from threading import Thread
 from subprocess import call
-from GitFSBase import GitFSBase, GitFSError
+
+from gitfs.GitFSBase import GitFSError
+from gitfs import GitFSBase
+
 
 class GitFSClient(GitFSBase, object):
     @staticmethod
@@ -59,13 +58,13 @@ class GitFSClient(GitFSBase, object):
                 #except GitFSError as ge:
                 #   logging.debug('not a gitfs path: %s' %ge)
                 #  pass
-                
+
                 if client is not None and client.pingRemote():
                     return client
 
             if not recurse:
                 break
-            
+
             path = os.path.abspath(os.path.join(path, os.pardir))
 
         raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
@@ -89,7 +88,7 @@ class GitFSClient(GitFSBase, object):
         csp = base.getControlSocketPath(ident)
         logging.debug('trying %s for ident %s' %(csp, ident))
         f = iglob(csp)
-        
+
         for sockname in f:
             try:
                 r.append(func(sockname))
@@ -101,7 +100,7 @@ class GitFSClient(GitFSBase, object):
                     except OSError:
                         pass
         return r
-            
+
     @staticmethod
     def getClientBySockName(sockname):
         base = GitFSBase()
@@ -138,7 +137,7 @@ class GitFSClient(GitFSBase, object):
         self.root = os.path.realpath(path)
         self.control_path = self.getControlDirectory()
         self.id = ident
-            
+
         if self.getID(lock) is None:
             raise GitFSError(GitFSError.eNotGitFS, "Not a gitfs path.")
 
@@ -151,7 +150,7 @@ class GitFSClient(GitFSBase, object):
             self.socket_path = r[0]
         else:
             self.socket_path = self.getControlSocketPath(self.getID(lock))
-        
+
         logging.debug("socket_path = %s" %self.socket_path)
         self.holdLock = False
         self.progressChecker = None
@@ -175,10 +174,10 @@ class GitFSClient(GitFSBase, object):
             # if we are not making progress, then quit.
             if self.progressChecker != None and self.progressChecker.progress() != True:
                 break
-                
+
             self.lockRemote()
             time.sleep(30)
-        
+
     def lockRemoteAndHold(self, progress=None):
         # XXXXX Fixme:  really need to lock this and single the
         # thread to exit using a Condition.
@@ -224,13 +223,13 @@ class GitFSClient(GitFSBase, object):
         if res is not None and key in res:
             return res[key]
         return None
-        
+
     def sync(self):
         # now do the pull/push combination.
         # XXXXX Fixme: need a library to access git, not just shelling out.
         # this currently has to be done locally since
         # we are merging and we don't yet have a remote merge tool.
-        # assumes it's run from beneath the git directory. 
+        # assumes it's run from beneath the git directory.
         info = self.getInfoRemote();
         if 'origin' not in info:
             info['origin'] = 'origin'
@@ -247,14 +246,14 @@ class GitFSClient(GitFSBase, object):
             call('git mergetool', shell=True)
             call('git commit -a', shell=True)
             call('git push \"%s\" \"%s\"' %(info['origin'], info['branch']), shell=True)
-        
+
         finally:
             self.unlockRemote()
 
     def getID(self, lock=True):
         if self.id is not None:
             return self.id
-        
+
         mt = self.getMTab(lock)
         if self.root not in mt:
             return None
@@ -265,7 +264,7 @@ class GitFSClient(GitFSBase, object):
 
     def getMountPoint(self):
         return self.root
-            
+
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
@@ -285,5 +284,5 @@ if __name__ == "__main__":
             res = client.executeRemote({'action': command})
             print "%s: %s" %(command, res)
     exit(0)
-            
-    
+
+

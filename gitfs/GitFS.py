@@ -28,7 +28,7 @@
 # possible to maintain real git repositories inside of a git respository.  The escaping of filenames is
 # critical for that.  It also allows the system to know when a file has been changed so that git commits only
 # occur when something has changed.
-# 
+#
 # Using this, git makes a good disconnected use file-system.  Eventually, we should be able to make it peer to peer
 # using something like mdns so that collaboration can continue even when the main servers are down or a network is
 # unreachable.
@@ -43,24 +43,23 @@ import sys
 import socket
 import platform
 import random
-
 from errno import EACCES, EBUSY
+from fuse import Operations, FuseOSError, FUSE
 from sys import argv, exit
 from time import time
 from threading import Lock, Condition, Thread, Timer, Semaphore
 from urlparse import urlparse # used to figure out the host so we can determine if it's remote or local.
 from socket import getaddrinfo, gaierror #call this to translate the host/port into something useable.
-from IPy import IP # use to determine if we should consider the ip address local or not.
 from subprocess import call, check_output
-from mUUID import mUUID;
+from SocketServer import ThreadingUnixStreamServer, BaseRequestHandler
 
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
-
-from SocketServer import ThreadingUnixStreamServer, BaseRequestHandler, ThreadingMixIn
+from IPy import IP # use to determine if we should consider the ip address local or not.
+from gitfs.HostInfo import HostInfo
+from mUUID import mUUID
 from GitFSClient import GitFSClient
 from GitFSBase import GitFSBase, GitFSError
 from Packetize import PacketizeMixIn
-from HostInfo import HostInfo
+
 
 class GitStatus(object):
 
@@ -106,13 +105,14 @@ class GitStatus(object):
 class GitRepo(GitFSBase, object):
 
     def __init__(self, path, origin, branch, sync=False):
+        super(GitRepo, self).__init__()
         self.path = path
         logging.debug('repo.path = %s' %self.path)
         self.halt = False
         self.origin = origin
         self.branch = branch
         self.status = GitStatus(path)
-        
+
         self.host = None
         self.scheme = None
         self.merge_needed = 0
@@ -123,7 +123,7 @@ class GitRepo(GitFSBase, object):
         self.timer = Timer(0, self.push, args=())
         self.timer.start()
         self.forcePush()
-        
+
         if sync:
             self.synchronize()
 
@@ -148,7 +148,7 @@ class GitRepo(GitFSBase, object):
     def syncTime(self):
         if self.scheme == 'file':
             return 10
-        
+
         if self.host == None or self.host == "":
             return 60
 
@@ -157,13 +157,13 @@ class GitRepo(GitFSBase, object):
             ai = getaddrinfo(self.host, self.port)
         except gaierror:
             # try again in a minute
-            return 60 
-            
+            return 60
+
         # for now assume private = rapid updates.
         for addressinfo in ai:
             if IP(addressinfo[4][0]).iptype == 'PRIVATE':
                 return 60
-            
+
         return 60*10
 
     def syncNeeded(self):
@@ -192,7 +192,7 @@ class GitRepo(GitFSBase, object):
         #         merge_needed = 0
         #     else:
         #         Message("Merge failed.  Please manually merge with gmerge")
-            
+
         # else:
         #     Message("Please manually merge with gmerge")
 
@@ -204,7 +204,7 @@ class GitRepo(GitFSBase, object):
 
             if originurl == '':
                 return 1
-            
+
             pr = urlparse(originurl)
             logging.debug('originurl = %s, pr = %s' %(originurl, pr))
             self.scheme = pr.scheme
@@ -221,7 +221,7 @@ class GitRepo(GitFSBase, object):
                     self.host = self.host.partition('@')[2]
 
             logging.debug('pull')
-            
+
             ret = call('git pull --ff-only origin \"%s\"' %self.branch, shell=True)
             if ret != 0:
                 if self.merge_needed != 1:
@@ -230,7 +230,7 @@ class GitRepo(GitFSBase, object):
                 self.merge_needed = 0
 
             return 0
-        
+
         except OSError as e:
             logging.debug('OSError')
             return 1
@@ -265,7 +265,7 @@ class GitRepo(GitFSBase, object):
                         self.timer.cancel()
 
                     #we need to check what happened and try again.
-                    self.status.update() 
+                    self.status.update()
                     self.timer = Timer(60, self.push, args=())
                     self.timer.start()
             else:
@@ -290,7 +290,7 @@ class GitRepo(GitFSBase, object):
 class GitFS(GitFSBase, Operations):
     """A simple filesystem using Git and FUSE.
     """
-    
+
     def __init__(self, origin, branch='master', path='.', mount_point='.'):
         super(GitFS, self).__init__()
         self.origin = origin
@@ -312,7 +312,7 @@ class GitFS(GitFSBase, Operations):
         self.lock_lock = Condition()
         self.locks = {}
         self.lock_expire_time = time()
-        
+
         self.control_dir = self.getControlDirectory()
         try:
             os.makedirs(self.control_dir)
@@ -326,7 +326,7 @@ class GitFS(GitFSBase, Operations):
             pass
 
         self.control_socket_path = self.getControlSocketPath(self.getID(), server=True)
-        self.lockGitFSDir();
+        self.lockGitFSDir()
         try:
             try:
                 client = GitFSClient.getClientByPath(self.mount_point, False, False)
@@ -347,12 +347,12 @@ class GitFS(GitFSBase, Operations):
                                                 handleDict=lambda s,d: s.fs._handleRequest(s,d))))
             self.control_server.daemon_threads = True
 
-                # setup the threads last so that they don't prevent an exit.       
+                # setup the threads last so that they don't prevent an exit.
             self.control_thread = Thread(target = self.control_server.serve_forever, args=())
             self.control_thread.start()
 
         finally:
-            self.unlockGitFSDir();
+            self.unlockGitFSDir()
 
         mt = self.getMTab()
         mt[mount_point] = self.getID()
@@ -366,7 +366,7 @@ class GitFS(GitFSBase, Operations):
         if self.id is None:
             self.id = mUUID.getUUIDFromFile(self.getUUIDFile(self.root), create=True).toString()
         return self.id
-    
+
     def _lockWithTimeOut(self, name, t):
         if t <= 0:
             return
@@ -390,7 +390,7 @@ class GitFS(GitFSBase, Operations):
         self.lock_lock.acquire()
         self.__lockTimerExpire()
         self.lock_lock.release()
-        
+
     def __lockTimerExpire(self):
         logging.debug('__lockTimeExpire')
         now = time()
@@ -418,7 +418,7 @@ class GitFS(GitFSBase, Operations):
                 self.lock_timer = None
                 self.sync_c.release()
 
-            
+
     def _unlock(self, name):
         if name not in self.locks:
             return
@@ -426,11 +426,11 @@ class GitFS(GitFSBase, Operations):
         self.lock_lock.acquire()
         t = self.locks[name]
         del self.locks[name]
-        if t >= self.lock_expire_time or len(keys(self.locks)) == 0:
+        if t >= self.lock_expire_time or len(self.locks.keys()) == 0:
             self.__lockTimerExpire()
-            
+
         self.lock_lock.release()
-        
+
     def _handleRequest(self, request, d):
         if d['action'] in self.handlers:
             mf = self.handlers[d['action']]
@@ -458,7 +458,7 @@ class GitFS(GitFSBase, Operations):
         self._respond(request,{'status': 'ok', 'origin': self.repo.origin,
                                'branch': self.repo.branch, 'root':self.root,
                                'path':self.mount_point })
-        
+
     def _getConfig(self, reqDict, request):
         key = reqDict['key']
         resp = self.getConfigForInstance(key)
@@ -489,22 +489,22 @@ class GitFS(GitFSBase, Operations):
                 self.sync_c.release()
                 break
 
-    def getHostInfo():
+    def getHostInfo(self):
         if self.hostinfo is None:
             self.hostinfo = HostInfo()
         self.hostinfo.update()
         return self.hostinfo
-                
+
     def matchesInstance(self, key):
         """ returns a number determinging how well the past in key matches the current instance."""
         if key == 'default':
             return .1 #Very weak match
-        
+
         hostinfo = self.getHostInfo()
         try:
             ip = socket.inet_pton(key)
             return hostinfo.matchAddress(ip)
-        except SocketError:
+        except socket.error:
             pass
 
         return hostinfo.matchHostName(key)
@@ -527,15 +527,15 @@ class GitFS(GitFSBase, Operations):
                     match = tm
                     rv = value
             v = rv
-            
+
         if v is None:
             return None
 
         if isinstance(v, list):
-            v = random.choose(v)
+            v = random.choice(v)
 
         return (match, v)
-        
+
     def getConfigForInstance(self, key):
         match=0
         value=None
@@ -544,7 +544,7 @@ class GitFS(GitFSBase, Operations):
             filenames = self.config_file_priorities[key]
         else:
             filenames = self.config_file_priorities['default']
-            
+
         for name in filenames:
             a = self.getConfigForInstanceSingleFile(key, name)
             if a is None:
@@ -560,7 +560,7 @@ class GitFS(GitFSBase, Operations):
         self.sync_c.acquire()
         self.sync_c.notifyAll()
         self.sync_c.release()
-        
+
     def needSync(self):
         logging.debug('needSync()')
         self.timer_c.acquire()
@@ -584,7 +584,7 @@ class GitFS(GitFSBase, Operations):
         self.sync_c.notifyAll()
         self.sync_c.release()
         self.repo.shutDown()
-    
+
     def destroy(self, path):
         self.shutdown()
         if self.control_server != None:
@@ -593,7 +593,7 @@ class GitFS(GitFSBase, Operations):
                 os.remove(self.control_socket_path)
             except OSError:
                 pass
-        
+
     def __call__(self, op, path, *args):
         try:
             logging.debug("calling %s on %s" %(op, path))
@@ -606,7 +606,7 @@ class GitFS(GitFSBase, Operations):
         except Exception as e:
             logging.debug("Unhandled exception %s" %e)
             raise e
-    
+
     def access(self, path, mode):
         if not os.access(path, mode):
             raise FuseOSError(EACCES)
@@ -618,11 +618,11 @@ class GitFS(GitFSBase, Operations):
     def chown(self, path, uid, gid):
         self.needSync()
         return super(GitFS, self).chown(path, uid, gid)
-    
+
     def create(self, path, mode):
         # XXXXX Fixme what should the flags be?
         return os.open(path, os.O_RDWR | os.O_CREAT, mode)
-    
+
     def flush(self, path, fh):
         self.sync_c.acquire()
         self.sync_c.notifyAll()
@@ -635,25 +635,25 @@ class GitFS(GitFSBase, Operations):
 
     def fsyncdir(self, path, datasync, fh):
         return self.fsync(path, datasync, fh)
-                
+
     def getattr(self, path, fh=None):
         st = os.lstat(path)
         return dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
             'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
-    
+
     getxattr = None
-    
+
     def link(self, target, source):
         source = self.escapePath(source)
         self.needSync()
         return os.link(source, target)
-    
+
     listxattr = None
     mknod = os.mknod
 
     def mkdir(self, path, mode):
         return os.mkdir(path, mode)
-    
+
     def open(self, path, fip):
         f = os.open(path, fip)
         logging.debug("open(%s, %s): %d" %(path, fip, f))
@@ -671,12 +671,12 @@ class GitFS(GitFSBase, Operations):
             if self.isValidPath(file):
                 uefiles = uefiles + [self.unescapePath(file)]
         return [ '.', '..'] + uefiles
-    
+
     readlink = os.readlink
-    
+
     def release(self, path, fh):
         return os.close(fh)
-        
+
     def rename(self, old, new):
         self.needSync()
         return os.rename(old, self.root + self.escapePath(new))
@@ -684,17 +684,17 @@ class GitFS(GitFSBase, Operations):
     def rmdir(self, path):
         self.needSync()
         return os.rmdir(path)
-    
+
     def statfs(self, path):
         stv = os.statvfs(path)
         return dict((key, getattr(stv, key)) for key in ('f_bavail', 'f_bfree',
             'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag',
             'f_frsize', 'f_namemax'))
-    
+
     def symlink(self, target, source):
         self.needSync()
         return os.symlink(source, target)
-    
+
     def truncate(self, path, length, fh=None):
         self.needSync()
         with open(path, 'r+') as f:
@@ -703,9 +703,9 @@ class GitFS(GitFSBase, Operations):
     def unlink(self, path):
         self.needSync()
         return os.unlink(path)
-        
+
     utimens = os.utime
-    
+
     def write(self, path, data, offset, fh):
         self.needSync()
         with self.rwlock:
@@ -713,7 +713,7 @@ class GitFS(GitFSBase, Operations):
             return os.write(fh, data)
 
 def main(origin, branch, local, mountpt):
-    gitfs = GitFS(origin, branch, local, mountpt);
+    gitfs = GitFS(origin, branch, local, mountpt)
     options = {}
     options['foreground']=True
     if platform.system == 'Darwin':

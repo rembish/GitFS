@@ -21,22 +21,24 @@ It should have identical systax as ssh since all it does is call gsync locally,
 then ssh to the remote machine, cd to the same directory relative to the gitfs mount,
 run gsync, and finally run the remote command.
 """
+import fcntl
+import errno
 import os
 import logging
 import sys
 import subprocess
-
 from sys import argv, exit
 from argparse import ArgumentParser
 
 from GitFSClient import GitFSClient
-from ssh import SSH
+from gitfs.ssh import SSH
+
 
 class GSH:
     "The main class.  First you build it, then you tweak it, then you execute it."
 
     def __init__(self, command, path=os.getcwd()):
-        self.command = command;
+        self.command = command
         path = os.path.realpath(os.path.abspath(path))
         self.client = GitFSClient.getClientByPath(path)
         self.path = self.client.makeRootRelative(path)
@@ -49,7 +51,7 @@ class GSH:
         self.client.sync()
         #ssh_command = "cd `ginfo.py -r \"%s\"` && gsync.py . && cd %s && %s" %(self.client.getID(), self.path, self.command)
         ssh_command = 'gsh.py --remote --id \"%s\" --path \"%s\" --command \"%s\"' %(self.client.getID(), self.path, self.command)
-        self.ssh = SSH(host, [ ssh_command ]);
+        self.ssh = SSH(host, [ ssh_command ])
         self.ssh.execute()
 
     def setNonBlocking(self):
@@ -80,16 +82,16 @@ class GSH:
     def _read(self, file, size):
         try:
             buff = file.read(size)
-        except OS.IOError as ioe:
+        except IOError as ioe:
             if ioe.errno != errno.EAGAIN and ioe.errno != errno.EWOULDBLOCK:
                 raise ioe
             buff = ''
         return buff
-            
+
     def _write(self, file, buffer):
         try:
             ret = file.write(buffer)
-        except OS.IOError as ioe:
+        except IOError as ioe:
             if ioe.errno != errno.EAGAIN and ioe.errno != errno.EWOULDBLOCK:
                 raise ioe
             ret = 0
@@ -164,13 +166,13 @@ if __name__ == '__main__':
         if client is None:
             print >> sys.stderr, 'Unable to locate gitfs file system %s' %cmdline.id
             exit(1)
-            
+
         os.chdir(os.path.join(client.getMountPoint(), cmdline.path))
         client.sync()
         subprocess.call(cmdline.command, shell=True)
         exit(0)
 
-    
+
 
 
 

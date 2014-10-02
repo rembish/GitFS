@@ -24,4 +24,4 @@ class UUID(object):
         self.uuid = None
 
     def generate(self):
-        
+        pass

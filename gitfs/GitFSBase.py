@@ -27,8 +27,9 @@ import socket
 import errno
 
 from LockFile import LockFile
-from ConfigFile import ConfigFile
 from Packetize import PacketizeMixIn
+from gitfs import ConfigFile
+
 
 class GitFSStringMixIn:
     """A collection of functions that manipulate strings and all the
@@ -61,7 +62,7 @@ class GitFSStringMixIn:
 
         if fil != '.' and fil != '..' and len(fil) > 0 and fil[0] == '@':
             fil = fil[1:]
-            
+
         return os.path.join(self.unescapePath(dir), fil)
 
     def isValidPath(self, path):
@@ -69,7 +70,7 @@ class GitFSStringMixIn:
             return True
 
         dir, fil = os.path.split(path)
-        
+
         if fil != '.' and fil != '..' and len(fil) > 0:
             if fil[0] == '.':
                 return False
@@ -96,7 +97,7 @@ class GitFSStringMixIn:
                 continue
             data = data + key + ':' + dict[key] + "\n"
         return data
-    
+
     def getGitFSDir(self):
         path = os.path.expanduser('~/.gitfs')
         if not self.gitfs_dir_exists:
@@ -106,7 +107,7 @@ class GitFSStringMixIn:
             except OSError:
                 pass
         return path
-    
+
     def getControlDirectory(self):
         return os.path.join(self.getGitFSDir(),'control')
 
@@ -123,12 +124,12 @@ class GitFSStringMixIn:
             id = self.getFullID(id)
         if id is None:
             id = ''
-            
+
         return os.path.join(self.getControlDirectory(), id)
 
     def getUUIDFile(self, root):
         return os.path.join(self.getInfoDirectory(root), 'uuid')
-        
+
     def checkDict(self, dict, **kwargs):
         c = dict(**kwargs)
         try:
@@ -142,7 +143,7 @@ class GitFSStringMixIn:
 class GitFSError(Exception):
     """Errors that gitfs can throw."""
     eNotGitFS = 1
-    
+
 class GitFSBase(PacketizeMixIn, GitFSStringMixIn, object):
     def __init__(self):
         self.socket = None

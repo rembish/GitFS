@@ -21,19 +21,19 @@ intiating a remote build.
 """
 
 import logging
-
 from argparse import ArgumentParser
-from sys import argv, exit, stderr
-from GitFSClient import GitFSClient
+from sys import argv, stderr
+
+from gitfs.GitFSClient import GitFSClient
 
 if __name__ == "__main__":
     logging.basicConfig(stream=stderr, level=logging.DEBUG)
     parser = ArgumentParser(description='sync a local filesystem with the remote sourde.')
     parser.add_argument('directory')
-    
+
     cmdline = parser.parse_args(argv[1:])
     logging.debug('cmdline=%s' %cmdline)
 
     client = GitFSClient.getClientByPath(cmdline.directory)
     client.sync()
-    
+

@@ -23,11 +23,9 @@ import logging
 import os
 import sys
 
-from argparse import ArgumentParser
-from sys import argv, exit
-from subprocess import call
 from GitFSClient import GitFSClient
-from gsh import GSH
+from gitfs.gsh import GSH
+
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
@@ -35,19 +33,19 @@ if __name__ == "__main__":
     client = GitFSClient.getClientByPath(cwd)
     info=client.getInfoRemote()
     logging.debug("received info: %s" %info)
-    
+
     if 'origin' not in info:
         info['origin'] = 'origin'
     if 'branch' not in info:
         info['branch'] = 'master'
-        
+
     client.sync()
 
     # Now, we need to run the remote version.
     host = client.getConfigForInstance('build_host')
     if host is None:
         host='localhost'
-        
+
     command = client.getConfigForInstance('build_command')
     if command is None:
         command = 'make'
@@ -55,7 +53,7 @@ if __name__ == "__main__":
     command_args = [command ] + sys.argv[1:]
     # XXXX FXIME ned a way to massage the arguments before adding them to the command array.  Read something from the
     # config file and exec it.
-    
+
     gsh = GSH(command)
     gsh.execute(host)
     gsh.displayAndWait()

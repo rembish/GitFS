@@ -16,11 +16,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
+import textwrap
 import re
-import logging
 
-from ManyFile import ManyFile
-from GFile import GFile
+from gitfs.GFile import GFile
+from gitfs.ManyFile import ManyFile
+
 
 class ConfigFileException(Exception):
     def __init__(self, message, file, line):
@@ -30,7 +31,8 @@ class ConfigFileException(Exception):
 
     def __str__(self):
         return '%s at %s(%d)' %(self.message, self.file, self.line)
-    
+
+
 class ConfigFile(object):
     def __init__(self):
         self.filename = None
@@ -51,7 +53,7 @@ class ConfigFile(object):
                 current[key] = value
         elif isinstance(current, list):
             if key is not None and key != '':
-                raise ConfigFileException('syntax error', f.filename(), f.filelineno())
+                raise ConfigFileException('syntax error', self.filename.filename(), self.filename.filelineno())
             if cont:
                 current.push(current.pop() + value)
             else:
@@ -60,7 +62,7 @@ class ConfigFile(object):
     def stripComments(self, l):
         m = re.search(r'(\\\\)*#@\s*(?P<name>[a-zA-Z0-9_]*)\s*(?P<value>.*)', l)
         if m is not None:
-            self.docs[m.gropu('name')] = self.docs[m.group('name')] + " " + m.group('value')
+            self.docs[m.group('name')] = self.docs[m.group('name')] + " " + m.group('value')
         m = re.search(r'(\\\\)*#', l)
         if m is not None:
             l = l[:m.end()- 1]
@@ -68,7 +70,7 @@ class ConfigFile(object):
 
     def writeDict(self, f, d):
         for k,v in d.items():
-            f.write(k + ': ');
+            f.write(k + ': ')
             if isinstance(v, dict):
                 f.write ('{')
                 self.writeDict(f, v)
@@ -94,8 +96,8 @@ class ConfigFile(object):
             else:
                 f.write(v)
             f.writeln(', ')
-                
-        
+
+
     def writeFile(self, filename):
         f = GFile.open(filename, 'w')
         for n in ( 'title', 'mode', 'author', 'version' ):
@@ -159,7 +161,7 @@ class ConfigFile(object):
                         else:
                             raise ConfigFileException('Syntax Error', f.filename(), f.filelineno())
                         continue
-                    
+
                 if l[0] == '}':
                     l = l[1:]
                     if not isinstance(current, dict):
@@ -181,7 +183,7 @@ class ConfigFile(object):
                     key=''
                     continue
 
-                if l[0] == '$': 
+                if l[0] == '$':
                     # special case, it's a directive like $include, not a regular statement.
                     w = l[1:].split(maxsplit=1)
                     d=w[0]
@@ -212,8 +214,8 @@ class ConfigFile(object):
                     closing = '}'
                 else:
                     closing = ']'
-                
-                m = re.match(r'(([^,\%s]|(\\\\)*\\[,\%s])*)(?P<end>[,\%s])' %(closing, closing, closing),  l)
+
+                m = re.match(r'(([^,%s]|(\\\\)*\\[,%s])*)(?P<end>[,%s])' %(closing, closing, closing),  l)
                 if m is not None:
                     #logging.debug('found match key=%s value=%s' %(key, m.group(1)))
                     self.addValue(current, key, m.group(1), cont)

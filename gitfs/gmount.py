@@ -25,17 +25,17 @@ is the same one with a . prepended.  When there is a mkgitfs, it will
 need to make sure all of the assumptions gmount and GitFS make are
 respected.
 """
+from fuse import FUSE
+from gitfs.GitFSBase import GitFSError
 
-import GitFS
 import os
-import fuse
 import logging
 import sys
 import platform
-
 from argparse import ArgumentParser
 from sys import argv, exit
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+
+from gitfs import GitFS
 
 
 def readFSTab(file, fstab):
@@ -50,7 +50,7 @@ def readFSTab(file, fstab):
     if os.path.isdir(file):
        map(lambda f: readFSTab(f, fstab), filter(lambda f: len(f) > 0 and f[len(f) - 1] != '~', os.path.listdir(file)))
        return
-    
+
     lines = [line.strip() for line in open(file)]
 
     for l in lines:
@@ -92,7 +92,7 @@ def parseOptions(o, options):
             options[n] = k
         else:
             options[n] = True
-            
+
 def mergeCommandLineAndOptions(commandline, options):
     # command line overrides options. 'read_only', 'read_write',
     # 'volname' are the only command options that need to transfer
@@ -116,8 +116,8 @@ def mergeOptions(o1, o2):
     for k in o2.keys():
         o1[k] = o2[k]
 
-    if 'ro' in o1 and ro not in o2:
-        del o1[ro]
+    if 'ro' in o1 and 'ro' not in o2:
+        del o1['ro']
 
 def mergeFSTab(fstabs):
     """Merge the options from a bunch of fstabs.  We have to check
@@ -132,17 +132,17 @@ def mergeFSTab(fstabs):
     logging.debug('mergeFstab: first fstab: %s' %fstab)
     for fs in fstabs:
         if fs['mount_point'] != fstab['mount_point'] or fs['device'] != fstab['device']:
-            raise GitFSExcpetion('Mismatched FSTab entries.')
+            raise GitFSError('Mismatched FSTab entries.')
         mergeOptions(fstab['options'], fs['options'])
 
     logging.debug('mergeFstab: final fstab: %s' %fstab)
     return fstab
-    
+
 def mount(device, mount_point, options):
     if platform.system == 'Darwin' and 'volname' not in options:
         dir, fil = os.path.split(mount_point)
         options['volname'] = fil
-        
+
     origin = 'origin'
     if 'origin' in options:
         origin = options['origin']
@@ -199,13 +199,13 @@ if __name__ == "__main__":
     # options will be a list of strings, separated by ,'s
     for o in cmdline.options:
         parseOptions(o, options)
-                
+
     if cmdline.gitfs_dir != None:
         gitfsdir = cmdline.gitfs_dir
     else:
         if 'gitfsdir' in options:
             gitfsdir = options['gitfsdir']
-        
+
     gitfsdir = os.path.expandvars(os.path.expanduser(gitfsdir))
 
     mergeCommandLineAndOptions(cmdline, options)

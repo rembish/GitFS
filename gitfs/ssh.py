@@ -21,7 +21,7 @@
 import logging
 
 from subprocess import Popen, PIPE
-from sys import argv;
+from sys import argv
 
 class SSH(object):
     def __init__(self, host, command):
@@ -36,7 +36,7 @@ class SSH(object):
         c = [self.ssh] + self.ssh_args + [self.host] + self.command
         self.proc = Popen(c, bufsize = -1, stdin = PIPE, stdout=PIPE, stderr=PIPE, close_fds=True, shell=False)
         if self.proc.stdin:
-            self.proc.stdin.close();
+            self.proc.stdin.close()
             self.proc.stdin = None
 
     def stdout(self):
@@ -48,7 +48,7 @@ class SSH(object):
         if self.proc is None:
             return None
         return self.proc.stderr
-        
+
     def wait(self):
         if self.proc is None:
             return None
@@ -58,13 +58,13 @@ class SSH(object):
         if self.proc is None:
             return None
         return self.proc.wait()
-        
-    def terminate():
+
+    def terminate(self):
         if self.proc is None:
             return None
-        return self.proc.terminate();
+        return self.proc.terminate()
 
-    def kill():
+    def kill(self):
         if self.proc is None:
             return None
         return self.proc.kill()
@@ -77,8 +77,8 @@ def main(host, command):
     ssh = SSH(host, [command])
     ssh.execute()
     print ssh.stdout().read()
-    
-    
+
+
 if __name__ == "__main__":
     #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
     if len(argv) != 3:
